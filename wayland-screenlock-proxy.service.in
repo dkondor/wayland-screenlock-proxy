@@ -5,7 +5,7 @@ After=graphical-session.target
 Requisite=graphical-session.target
 
 [Service]
-ExecStart=@libexec@/lwrap
+ExecStart=@libexec@/wayland-screenlock-proxy
 Type=exec
 
 [Install]
