@@ -32,7 +32,7 @@ Dependencies:
  - [meson](https://mesonbuild.com)
  - [Valac](https://gitlab.gnome.org/GNOME/vala)
  - Libraries (should be standard on most systems) `gio-2.0, gio-unix-2.0, glib-2.0 (version >= 2.78), gobject-2.0, wayland-client, wayland-scanner`
- - [wayland-protocols](https://gitlab.freedesktop.org/wayland/wayland-protocols) version >= 1.25
+ - optionally, [wayland-protocols](https://gitlab.freedesktop.org/wayland/wayland-protocols) version >= 1.25, for the Gdm-based backend (see below)
 
 ## Building and installing
 
@@ -89,8 +89,7 @@ to prefer to use `swaylock`. The following backends are supported:
  - `waylock`: https://codeberg.org/ifreund/waylock
  - `gdm`: experimental backend that locks the screen without displaying any UI and switches to the gdm login manager to do authentication.
 This requires that you use actually use [gdm](https://gitlab.gnome.org/GNOME/gdm) and also a compositor which will create an empty lock surface if
-none is provided by the `ext-session-lock-v1` client. This behavior is required by the protocol, but is not supported by all compositors, e.g. on
-Wayfire, the session will remain visible in this case.
+none is provided by the `ext-session-lock-v1` client. Note that this is not built by default, you need to enable it by adding the `-Denable_gdm=true` option to meson.
 
 ## Planned features
 
