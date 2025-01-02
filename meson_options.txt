@@ -1,0 +1,1 @@
+option('enable_gdm', type: 'boolean', value: false, description: 'Enable locking with Gdm')

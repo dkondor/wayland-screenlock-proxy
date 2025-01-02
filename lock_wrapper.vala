@@ -311,6 +311,7 @@ class gtklock_backend : lock_wrapper_backend
 	}
 }
 
+#if ENABLE_GDM
 class gdm_lock : lock_wrapper_backend
 {
 	public bool init_failed { get; private set; }
@@ -357,7 +358,7 @@ class gdm_lock : lock_wrapper_backend
 		SimpleLock.fini ();
 	}
 }
-
+#endif
 
 static bool check_backend (string backend)
 {
@@ -420,7 +421,10 @@ public static int main(string[] args)
 				return 1;
 			}
 		}
-		else if (backend != "gdm")
+		else
+#if ENABLE_GDM
+		if (backend != "gdm")
+#endif
 		{
 			stderr.printf ("Unknown screenlocker backend requested: %s\n", backend);
 			return 1;
@@ -439,13 +443,16 @@ public static int main(string[] args)
 	}
 	
 	lock_wrapper_backend lw = null;
+#if ENABLE_GDM
 	if (backend == "gdm")
 	{
 		gdm_lock gdm = new gdm_lock (session_id);
 		if (gdm.init_failed) return 1; // already prints a warning
 		lw = gdm;
 	}
-	else if (backend == "swaylock") lw = new swaylock_backend (session_id);
+	else
+#endif
+	if (backend == "swaylock") lw = new swaylock_backend (session_id);
 	else if (backend == "waylock") lw = new waylock_backend (session_id);
 	else lw = new gtklock_backend (session_id);
 	
