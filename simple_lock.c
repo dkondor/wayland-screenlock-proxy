@@ -20,7 +20,6 @@
 
 
 #include <simple_lock.h>
-#include <stdio.h>
 #include <string.h>
 #include <wayland-client.h>
 #include <libgwater-wayland.h>
@@ -45,12 +44,10 @@ static struct wl_registry_listener listener = { &_add, &_remove };
 static void _locked (void*, struct ext_session_lock_v1*)
 {
 	is_locked = true;
-	printf ("screen locked\n");
 }
 
 static void _finished (void*, struct ext_session_lock_v1*)
 {
-	printf ("screen lock finished\n");
 	simple_lock_unlock ();
 }
 
@@ -62,6 +59,11 @@ static struct ext_session_lock_v1_listener lock_listener = { &_locked, &_finishe
 bool simple_lock_init ()
 {
 	source = g_water_wayland_source_new (NULL, NULL);
+	if (!source)
+	{
+		g_log ("LockWrapper", G_LOG_LEVEL_CRITICAL, "Cannot connect to Wayland display, not running in a Wayland session?");
+		return false;
+	}
 	struct wl_display* display = g_water_wayland_source_get_display (source);
 	if (!display) return false;
 	
@@ -78,7 +80,6 @@ bool simple_lock_init ()
 /* Try to lock the screen. */
 void simple_lock_lock ()
 {
-	printf ("trying to lock the screen");
 	if (current_lock) return;
 	if (!manager) return;
 	is_locked = false;
@@ -89,7 +90,6 @@ void simple_lock_lock ()
 /* Unlock the screen. */
 void simple_lock_unlock ()
 {
-	printf ("trying to unlock the screen");
 	if (!current_lock) return;
 	if (is_locked) ext_session_lock_v1_unlock_and_destroy (current_lock);
 	else ext_session_lock_v1_destroy (current_lock);
@@ -99,6 +99,10 @@ void simple_lock_unlock ()
 void simple_lock_fini ()
 {
 	simple_lock_unlock ();
-	g_water_wayland_source_free (source);
+	if (source)
+	{
+		g_water_wayland_source_free (source);
+		source = NULL;
+	}
 }
 
