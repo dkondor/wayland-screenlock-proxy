@@ -1,0 +1,21 @@
+Source: wayland-screenlock-proxy
+Section: x11
+Priority: optional
+Maintainer: Daniel Kondor <kondor.dani@gmail.com>
+Build-Depends: debhelper-compat (= 13),
+               libglib2.0-dev,
+               meson,
+               valac,
+Standards-Version: 4.7.0
+Rules-Requires-Root: no
+Homepage: https://github.com/dkondor/wayland-screenlock-proxy
+Vcs-Browser: https://github.com/dkondor/wayland-screenlock-proxy
+Vcs-Git: https://github.com/dkondor/wayland-screenlock-proxy -b debian [debian]
+
+Package: wayland-screenlock-proxy
+Architecture: any
+Multi-Arch: foreign
+Depends: ${misc:Depends}, ${shlibs:Depends}, gtklock | swaylock
+Description: Proxy service to better integrate Wayland screenlockers with systemd-logind
+ This package provides a systemd service that listens to requests to lock the screen and
+ runs an available screenlocker.

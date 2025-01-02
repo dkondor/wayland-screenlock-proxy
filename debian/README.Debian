@@ -1,0 +1,5 @@
+wayland-screenlock-proxy for Debian
+
+Proxy service to better integrate Wayland screenlockers with systemd-logind.
+
+ -- Daniel Kondor <kondor.dani@gmail.com>  Thu, 2 Jan 2025 22:22:12 +0200

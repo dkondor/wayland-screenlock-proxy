@@ -1,0 +1,5 @@
+wayland-screenlock-proxy (0.1.0-1) unstable; urgency=medium
+
+  * Initial release. (Closes: #1059636)
+
+ -- Daniel Kondor <kondor.dani@gmail.com>  Thu, 2 Jan 2025 22:22:12 +0200
