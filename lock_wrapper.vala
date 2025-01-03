@@ -233,6 +233,17 @@ class swaylock_backend : pipefd_backend_base
 	}
 }
 
+class hyprlock_backend : pipefd_backend_base
+{
+	public hyprlock_backend (string _session_id)
+	{
+		base (_session_id);
+		exec = "hyprlock";
+		pipe_arg = "-R";
+		sig = Posix.Signal.USR1;
+	}
+}
+
 class waylock_backend : pipefd_backend_base
 {
 	public waylock_backend (string _session_id)
@@ -413,7 +424,7 @@ public static int main(string[] args)
 	
 	if (backend != null)
 	{
-		if (backend == "swaylock" || backend == "gtklock" || backend == "waylock")
+		if (backend == "swaylock" || backend == "gtklock" || backend == "waylock" || backend == "hyprlock")
 		{
 			if (! check_backend (backend))
 			{
@@ -433,6 +444,7 @@ public static int main(string[] args)
 	{
 		if (check_backend ("gtklock")) backend = "gtklock";
 		else if (check_backend ("swaylock")) backend = "swaylock";
+		else if (check_backend ("hyprlock")) backend = "hyprlock";
 		else if (check_backend ("waylock")) backend = "waylock";
 		else
 		{
@@ -454,6 +466,7 @@ public static int main(string[] args)
 #endif
 	if (backend == "swaylock") lw = new swaylock_backend (session_id);
 	else if (backend == "waylock") lw = new waylock_backend (session_id);
+	else if (backend == "hyprlock") lw = new hyprlock_backend (session_id);
 	else lw = new gtklock_backend (session_id);
 	
 	var sigterm = new GLib.Unix.SignalSource (Posix.Signal.TERM);
