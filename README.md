@@ -23,7 +23,7 @@ See e.g. [here](https://github.com/dkondor/wayfire-gnome) for setting up a minim
 One of the supported screenlockers need to be installed:
  - [Swaylock](https://github.com/swaywm/swaylock)
  - [Gtklock](https://github.com/jovanlanik/gtklock)
- - [Waylock](https://codeberg.org/ifreund/waylock) (note: unlocking is not supported)
+ - [Waylock](https://codeberg.org/ifreund/waylock) (note: unlocking in response to a signal is not supported)
 
 You need to be running a compositor that supports the `ext-session-lock-v1` protocol, such as a recent verson of
 [Wayfire](https://github.com/WayfireWM/wayfire), [Labwc](https://labwc.github.io/), [sway](https://swaywm.org/), etc.
@@ -79,21 +79,31 @@ swayidle timeout 300 'loginctl lock-session'
 
 ## Configuration
 
-Use the `-b` command line option to select which screenlocker backend to use, e.g.:
+Configuration is read from `$XDG_CONFIG_HOME/wayland-screenlock-proxy/config.ini` (by default `~/.config/wayland-screenlock-proxy/config.ini`).
+An example configuration is in the `config.ini` file provided here (installed under `{prefix}/share/wayland-screenlock-proxy/config.ini`). Currently,
+the following options are supported (all should be in the "General" section of the file):
+ - `allow_unlock`: whether to allow unlocking the screen in response to the "Unlock" signal from systemd (e.g. by running `loginctl unlock-session`). If this is false, unlocking is only possible from the screen locker (default: false)
+ - `backend`: name of the screenlocker program to use (see below; default: try all in the order shown below)
+
+If run from the command line, the following parameters can be used:
+ - `-u`: allow unlocking
+ - `-b [backend]`: select the screenlocker to use
+
+E.g. to use swaylock, run as:
 ```
 /usr/local/libexec/wayland-screenlock-proxy -b swaylock
 ```
-to prefer to use `swaylock`. The following backends are supported:
+
+The following backends are supported:
  - `swaylock`: https://github.com/swaywm/swaylock
  - `gtklock`: https://github.com/jovanlanik/gtklock
- - `waylock`: https://codeberg.org/ifreund/waylock
+ - `waylock`: https://codeberg.org/ifreund/waylock (does not support unlocking in response to a signal)
  - `gdm`: experimental backend that locks the screen without displaying any UI and switches to the gdm login manager to do authentication.
 This requires that you use actually use [gdm](https://gitlab.gnome.org/GNOME/gdm) and also a compositor which will create an empty lock surface if
-none is provided by the `ext-session-lock-v1` client. Note that this is not built by default, you need to enable it by adding the `-Denable_gdm=true` option to meson.
+none is provided by the `ext-session-lock-v1` client. Note that this is not built by default, you need to enable it by adding the `-Denable_gdm=true`
+option to meson.
 
 ## Planned features
 
- - Read options from a config file (e.g. preferred screenlocker).
- - Add an option to ignore unlock requests.
  - Make the gdm backend more robust and add support for other display managers as well.
 
