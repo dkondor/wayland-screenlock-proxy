@@ -24,6 +24,7 @@ abstract class lock_wrapper_backend : Object
 {
 	public bool is_locked { get; protected set; default = false; }
 	public MainLoop loop { get; construct; }
+	public bool init_failed { get; protected set; default = false; }
 	
 	protected interfaces.Manager manager = null;
 	protected interfaces.Session session = null;
@@ -35,7 +36,7 @@ abstract class lock_wrapper_backend : Object
 	public abstract void do_lock ();
 	public abstract void do_unlock ();
 	
-	protected lock_wrapper_backend (string _session_id)
+	protected lock_wrapper_backend (string _session_id, bool allow_unlock)
 	{
 		session_id = _session_id;
 		
@@ -43,13 +44,14 @@ abstract class lock_wrapper_backend : Object
 		{
 			manager = Bus.get_proxy_sync (BusType.SYSTEM, "org.freedesktop.login1", "/org/freedesktop/login1");
 			session_path = manager.get_session (session_id);
-			stdout.printf ("session_path: %s\n", (string)session_path);
+			log ("wayland-screenlock-proxy", LogLevelFlags.LEVEL_DEBUG, "session_path: %s\n", (string)session_path);
 			session = Bus.get_proxy_sync (BusType.SYSTEM, "org.freedesktop.login1", session_path);
 		}
 		catch (Error e)
 		{
-			stderr.printf ("Cannot create Dbus proxies: %s\n", e.message);
-			loop.quit(); // will not start
+			log ("wayland-screenlock-proxy", LogLevelFlags.LEVEL_CRITICAL, "Cannot create Dbus proxies: %s\n", e.message);
+			loop.quit();
+			init_failed = true;
 			return;
 		}
 		
@@ -57,10 +59,10 @@ abstract class lock_wrapper_backend : Object
 		try { inhibitor = manager.inhibit ("sleep", "lock_wrapper", "Ensure screen is locked before sleep", "delay"); }
 		catch (Error e)
 		{
-			stderr.printf ("Cannot create sleep inhibitor: %s\n", e.message);
+			log ("wayland-screenlock-proxy", LogLevelFlags.LEVEL_CRITICAL, "Cannot create sleep inhibitor: %s\n", e.message);
 		}
 		session.lock.connect (do_lock);
-		session.unlock.connect (do_unlock);
+		if (allow_unlock) session.unlock.connect (do_unlock);
 	}
 	
 	construct { loop = new MainLoop (); }
@@ -71,12 +73,7 @@ abstract class lock_wrapper_backend : Object
 		{
 			if (is_locked)
 			{
-				try { inhibitor.close (); }
-				catch (Error e)
-				{
-					stderr.printf ("Error releasing inhibitor: %s\n", e.message);
-				}
-				inhibitor = null;
+				stop_inhibitor ();
 				return;
 			}
 			should_stop_inhibitor = true;
@@ -87,7 +84,7 @@ abstract class lock_wrapper_backend : Object
 			try { inhibitor = manager.inhibit ("sleep", "lock_wrapper", "Ensure screen is locked before sleep", "delay"); }
 			catch (Error e)
 			{
-				stderr.printf ("Cannot create sleep inhibitor: %s\n", e.message);
+				log ("wayland-screenlock-proxy", LogLevelFlags.LEVEL_CRITICAL, "Cannot create sleep inhibitor: %s\n", e.message);
 			}
 		}
 	}
@@ -97,7 +94,7 @@ abstract class lock_wrapper_backend : Object
 		try { inhibitor.close(); }
 		catch (Error e)
 		{
-			stderr.printf ("Error releasing inhibitor: %s\n", e.message);
+			log ("wayland-screenlock-proxy", LogLevelFlags.LEVEL_WARNING, "Error releasing inhibitor: %s\n", e.message);
 		}
 		inhibitor = null;
 		should_stop_inhibitor = false;
@@ -116,7 +113,7 @@ abstract class lock_wrapper_backend : Object
 			try { session.set_locked_hint (false); }
 			catch (Error e)
 			{
-				stderr.printf ("Error with DBus communication: %s\n", e.message);
+				log ("wayland-screenlock-proxy", LogLevelFlags.LEVEL_CRITICAL, "Error with DBus communication: %s\n", e.message);
 				loop.quit (); // it does not make sense to try to continue, might be better to try respawning
 			}
 		}
@@ -142,9 +139,9 @@ class pipefd_backend_base : lock_wrapper_backend
 	protected string pipe_arg = null;
 	protected int sig = Posix.Signal.TERM;
 	
-	protected pipefd_backend_base (string _session_id)
+	protected pipefd_backend_base (string _session_id, bool allow_unlock)
 	{
-		base (_session_id);
+		base (_session_id, allow_unlock);
 	}
 	
 	public override void do_lock ()
@@ -156,13 +153,13 @@ class pipefd_backend_base : lock_wrapper_backend
 		{
 			if (!Unix.open_pipe (pipe_fds, Posix.O_CLOEXEC))
 			{
-				stderr.printf ("Cannot open a pipe!\n");
+				log ("wayland-screenlock-proxy", LogLevelFlags.LEVEL_CRITICAL, "Cannot open a pipe!\n");
 				return;
 			}
 		}
 		catch (Error e)
 		{
-			stderr.printf ("Cannot open a pipe: %s\n", e.message);
+			log ("wayland-screenlock-proxy", LogLevelFlags.LEVEL_CRITICAL, "Cannot open a pipe: %s\n", e.message);
 			return;
 		}
 		
@@ -176,7 +173,7 @@ class pipefd_backend_base : lock_wrapper_backend
 				null, -1, -1, -1, fds, fds, out child_pid, null, null, null);
 		} catch (SpawnError err)
 		{
-			stderr.printf ("Cannot start %s: %s\n\n", args[0], err.message);
+			log ("wayland-screenlock-proxy", LogLevelFlags.LEVEL_CRITICAL, "Cannot start %s: %s\n\n", args[0], err.message);
 		}
 		
 		FileUtils.close(pipe_fds[1]);
@@ -194,7 +191,7 @@ class pipefd_backend_base : lock_wrapper_backend
 				}
 			} catch (Error e)
 			{
-				stderr.printf ("Error with DBus communication: %s\n", e.message);
+				log ("wayland-screenlock-proxy", LogLevelFlags.LEVEL_CRITICAL, "Error with DBus communication: %s\n", e.message);
 				loop.quit (); // it does not make sense to try to continue, might be better to try restarting
 			}
 			return false;
@@ -224,9 +221,9 @@ class pipefd_backend_base : lock_wrapper_backend
 
 class swaylock_backend : pipefd_backend_base
 {
-	public swaylock_backend (string _session_id)
+	public swaylock_backend (string _session_id, bool allow_unlock)
 	{
-		base (_session_id);
+		base (_session_id, allow_unlock);
 		exec = "swaylock";
 		pipe_arg = "-R";
 		sig = Posix.Signal.USR1;
@@ -235,9 +232,9 @@ class swaylock_backend : pipefd_backend_base
 
 class waylock_backend : pipefd_backend_base
 {
-	public waylock_backend (string _session_id)
+	public waylock_backend (string _session_id, bool allow_unlock)
 	{
-		base (_session_id);
+		base (_session_id, allow_unlock); // note: allow_unlock is ignored
 		exec = "waylock";
 		pipe_arg = "-ready-fd";
 		sig = -1; // not possible to unlock by us
@@ -249,15 +246,16 @@ class gtklock_backend : lock_wrapper_backend
 	private Pid child_pid = -1;
 	private interfaces.Properties props = null;
 	
-	public gtklock_backend (string _session_id)
+	public gtklock_backend (string _session_id, bool allow_unlock)
 	{
-		base (_session_id);
+		base (_session_id, allow_unlock);
 		
 		try { props = Bus.get_proxy_sync (BusType.SYSTEM, "org.freedesktop.login1", session_path); }
 		catch (Error e)
 		{
-			stderr.printf ("Failed to create DBus proxies: %s\n", e.message);
+			log ("wayland-screenlock-proxy", LogLevelFlags.LEVEL_CRITICAL, "Failed to create DBus proxies: %s\n", e.message);
 			loop.quit ();
+			init_failed = true;
 			return;
 		}
 		props.properties_changed.connect (props_changed);
@@ -274,7 +272,7 @@ class gtklock_backend : lock_wrapper_backend
 				null, out child_pid);
 		} catch (SpawnError err)
 		{
-			stderr.printf ("Cannot start gtklock: %s\n\n", err.message);
+			log ("wayland-screenlock-proxy", LogLevelFlags.LEVEL_CRITICAL, "Cannot start gtklock: %s\n\n", err.message);
 		}
 		
 		ChildWatch.add (child_pid, (pid, status) => {
@@ -314,14 +312,11 @@ class gtklock_backend : lock_wrapper_backend
 #if ENABLE_GDM
 class gdm_lock : lock_wrapper_backend
 {
-	public bool init_failed { get; private set; }
 	private interfaces.LocalDisplayFactory dsp = null;
 	
-	public gdm_lock (string _session_id)
+	public gdm_lock (string _session_id, bool allow_unlock)
 	{
-		base (_session_id);
-		
-		init_failed = false;
+		base (_session_id, true); // always need to allow to unlock the screen
 		
 		if (!SimpleLock.init ()) init_failed = true;
 		else
@@ -329,7 +324,7 @@ class gdm_lock : lock_wrapper_backend
 			try { dsp = Bus.get_proxy_sync (BusType.SYSTEM, "org.gnome.DisplayManager", "/org/gnome/DisplayManager/LocalDisplayFactory"); }
 			catch (Error e)
 			{
-				stderr.printf ("Cannot create Gdm DBus proxy: %s\n", e.message);
+				log ("wayland-screenlock-proxy", LogLevelFlags.LEVEL_CRITICAL, "Cannot create Gdm DBus proxy: %s\n", e.message);
 				init_failed = true;
 			}
 		}
@@ -341,7 +336,7 @@ class gdm_lock : lock_wrapper_backend
 		try { dsp.create_transient_display(); }
 		catch (Error e)
 		{
-			stderr.printf ("Error communicating with Gdm: %s\n", e.message);
+			log ("wayland-screenlock-proxy", LogLevelFlags.LEVEL_CRITICAL, "Error communicating with Gdm: %s\n", e.message);
 			// note: in this case, we don't know if we could switch to Gdm's VT
 			// if this happened, it is better to stay locked to ensure a VT switch
 			// does not result in an unlocked session
@@ -372,7 +367,7 @@ static bool check_backend (string backend)
 	}
 	catch (Error e)
 	{
-		stderr.printf ("Cannot run 'which': %s\n", e.message);
+		log ("wayland-screenlock-proxy", LogLevelFlags.LEVEL_CRITICAL, "Cannot run 'which': %s\n", e.message);
 	}
 	return res;
 }
@@ -381,7 +376,30 @@ public static int main(string[] args)
 {
 	string session_id = null;
 	string backend = null;
+	bool allow_unlock = false;
 	
+	// read config
+	try
+	{
+		string config_location = Environment.get_variable ("XDG_CONFIG_HOME");
+		if (config_location == null) config_location = Environment.get_variable ("HOME") + "/.config";
+		config_location += "/wayland-screenlock-proxy/config.ini";
+		
+		KeyFile config = new KeyFile ();
+		config.load_from_file (config_location, KeyFileFlags.NONE);
+		
+		if (config.has_group ("General"))
+		{
+			if (config.has_key ("General", "allow_unlock")) allow_unlock = config.get_boolean ("General", "allow_unlock");
+			if (config.has_key ("General", "backend")) backend = config.get_string ("General", "backend");
+		}
+	}
+	catch (Error e)
+	{
+		log ("wayland-screenlock-proxy", LogLevelFlags.LEVEL_WARNING, "Cannot read config file, will use defaults (%s)\n", e.message);
+	}
+	
+	// process command line (overrides config)
 	for (int i = 1; i < args.length; i++)
 	{
 		if (args[i] == "-i")
@@ -393,6 +411,10 @@ public static int main(string[] args)
 		{
 			backend = args[i+1];
 			i++;
+		}
+		else if (args[i] == "-u")
+		{
+			allow_unlock = true;
 		}
 		else
 		{
@@ -406,7 +428,7 @@ public static int main(string[] args)
 		session_id = Environment.get_variable ("XDG_SESSION_ID");
 		if (session_id == null)
 		{
-			stderr.printf ("No session ID provided!\n");
+			log ("wayland-screenlock-proxy", LogLevelFlags.LEVEL_CRITICAL, "No session ID provided!\n");
 			return 1;
 		}
 	}
@@ -417,7 +439,7 @@ public static int main(string[] args)
 		{
 			if (! check_backend (backend))
 			{
-				stderr.printf ("Requested screenlocker ('%s') is not available\n", backend);
+				log ("wayland-screenlock-proxy", LogLevelFlags.LEVEL_CRITICAL, "Requested screenlocker ('%s') is not available\n", backend);
 				return 1;
 			}
 		}
@@ -426,7 +448,7 @@ public static int main(string[] args)
 		if (backend != "gdm")
 #endif
 		{
-			stderr.printf ("Unknown screenlocker backend requested: %s\n", backend);
+			log ("wayland-screenlock-proxy", LogLevelFlags.LEVEL_CRITICAL, "Unknown screenlocker backend requested: %s\n", backend);
 			return 1;
 		}
 	} else
@@ -437,24 +459,20 @@ public static int main(string[] args)
 		else
 		{
 			//  note: Gdm backend is not used by default
-			stderr.printf ("No supported screenlocker found");
+			log ("wayland-screenlock-proxy", LogLevelFlags.LEVEL_CRITICAL, "No supported screenlocker found");
 			return 1;
 		}
 	}
 	
 	lock_wrapper_backend lw = null;
 #if ENABLE_GDM
-	if (backend == "gdm")
-	{
-		gdm_lock gdm = new gdm_lock (session_id);
-		if (gdm.init_failed) return 1; // already prints a warning
-		lw = gdm;
-	}
+	if (backend == "gdm") lw = new gdm_lock (session_id, true); // always allow unlocking
 	else
 #endif
-	if (backend == "swaylock") lw = new swaylock_backend (session_id);
-	else if (backend == "waylock") lw = new waylock_backend (session_id);
-	else lw = new gtklock_backend (session_id);
+	if (backend == "swaylock") lw = new swaylock_backend (session_id, allow_unlock);
+	else if (backend == "waylock") lw = new waylock_backend (session_id, allow_unlock);
+	else lw = new gtklock_backend (session_id, allow_unlock);
+	if (lw.init_failed) return 1; // error message already displayed
 	
 	var sigterm = new GLib.Unix.SignalSource (Posix.Signal.TERM);
 	sigterm.set_callback ( () => {
