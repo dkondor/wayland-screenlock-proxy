@@ -1,8 +1,8 @@
 project(
-	'lock_wrapper',
+	'wayland-screenlock-proxy',
 	'c',
 	'vala',
-	version: '0.1.0',
+	version: '0.2.0',
 	license: 'GPLv3+',
 	meson_version: '>=1.0.0',
 	default_options: [
@@ -84,4 +84,5 @@ conf_data.set('libexec', get_option('prefix') / 'libexec')
 configure_file(configuration: conf_data, input: 'wayland-screenlock-proxy.service.in',
 	output: '@BASENAME@', install_dir: 'lib/systemd/user')
 
+install_data('config.ini')
 
