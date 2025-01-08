@@ -25,7 +25,7 @@
 #include <libgwater-wayland.h>
 #include <ext-session-lock-v1-client-protocol.h>
 
-GWaterWaylandSource *source = NULL;
+static GWaterWaylandSource *source = NULL;
 static struct ext_session_lock_manager_v1 *manager = NULL;
 static struct ext_session_lock_v1 *current_lock = NULL;
 static bool is_locked = false;
@@ -58,6 +58,8 @@ static struct ext_session_lock_v1_listener lock_listener = { &_locked, &_finishe
 /* Try to initialize the session lock interface. */
 bool simple_lock_init ()
 {
+	if (source) return false;
+
 	source = g_water_wayland_source_new (NULL, NULL);
 	if (!source)
 	{
@@ -65,16 +67,20 @@ bool simple_lock_init ()
 		return false;
 	}
 	struct wl_display* display = g_water_wayland_source_get_display (source);
-	if (!display) return false;
+	if (!display) goto error;
 	
 	struct wl_registry* registry = wl_display_get_registry (display);
-	if (!registry) return false;
+	if (!registry) goto error;
 
 	wl_registry_add_listener (registry, &listener, NULL);
 	wl_display_dispatch (display);
 	wl_display_roundtrip (display);
-	if (!manager) return false;
+	if (!manager) goto error;
 	return true;
+	
+error:
+	simple_lock_fini ();
+	return false;
 }
 
 /* Try to lock the screen. */
@@ -99,6 +105,13 @@ void simple_lock_unlock ()
 void simple_lock_fini ()
 {
 	simple_lock_unlock ();
+	
+	if (manager)
+	{
+		ext_session_lock_manager_v1_destroy (manager);
+		manager = NULL;
+	}
+	
 	if (source)
 	{
 		g_water_wayland_source_free (source);
