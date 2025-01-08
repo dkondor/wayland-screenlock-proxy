@@ -17,33 +17,50 @@ gobject  = dependency('gobject-2.0')
 posix    = meson.get_compiler('vala').find_library('posix')
 deps     = [glib, gobject, gio, gio_unix, posix]
 
+add_project_arguments(['--vapidir', meson.current_source_dir()], language: 'vala')
+add_project_arguments(['--pkg', 'idle_notify'], language: 'vala')
 if get_option('enable_gdm')
 	add_project_arguments(['-D', 'ENABLE_GDM'], language: 'vala')
-	add_project_arguments(['--vapidir', meson.current_source_dir()], language: 'vala')
 	add_project_arguments(['--pkg', 'simple_lock'], language: 'vala')
+endif
 
-	# wayland-scanner -- needed for using the ext-session-lock protocol
-	wayland_client = dependency('wayland-client', version: '>=1.1.91')
-	wayland_scanner = find_program('wayland-scanner')
-	wayland_protos = dependency('wayland-protocols', version: '>=1.25')
-	wl_protocol_dir = wayland_protos.get_variable('pkgdatadir')
 
-	subdir('gwater-wayland')
+# wayland-scanner -- needed for using the ext-session-lock protocol
+wayland_client = dependency('wayland-client', version: '>=1.1.91')
+wayland_scanner = find_program('wayland-scanner')
+wayland_protos = dependency('wayland-protocols', version: '>=1.27')
+wl_protocol_dir = wayland_protos.get_variable('pkgdatadir')
 
-	wayland_scanner_code = generator(
-		wayland_scanner,
-		output: '@BASENAME@-protocol.c',
-		arguments: ['private-code', '@INPUT@', '@OUTPUT@'],
-	)
+subdir('gwater-wayland')
 
-	wayland_scanner_client = generator(
-		wayland_scanner,
-		output: '@BASENAME@-client-protocol.h',
-		arguments: ['client-header', '@INPUT@', '@OUTPUT@'],
-	)
+wayland_scanner_code = generator(
+	wayland_scanner,
+	output: '@BASENAME@-protocol.c',
+	arguments: ['private-code', '@INPUT@', '@OUTPUT@'],
+)
 
+wayland_scanner_client = generator(
+	wayland_scanner,
+	output: '@BASENAME@-client-protocol.h',
+	arguments: ['client-header', '@INPUT@', '@OUTPUT@'],
+)
+
+
+idle_proto_xml = wl_protocol_dir / 'staging/ext-idle-notify/ext-idle-notify-v1.xml'
+idle_proto_header = wayland_scanner_client.process(idle_proto_xml)
+idle_proto = static_library('idle_proto',
+	[ idle_proto_header, wayland_scanner_code.process(idle_proto_xml) ],
+	dependencies: [wayland_client])
+idle_proto_dep = declare_dependency(link_with: idle_proto, sources: idle_proto_header)
+
+idle_notify = static_library('idle_notify', 'idle_notify.c',
+	dependencies: [wayland_client, idle_proto_dep, libgwater_wayland])
+idle_notify_dep = declare_dependency(link_with: idle_notify, include_directories: include_directories('.'))
+deps += idle_notify_dep
+
+if get_option('enable_gdm')
 	client_protocols = [
-		wl_protocol_dir + '/staging/ext-session-lock/ext-session-lock-v1.xml'
+		wl_protocol_dir / 'staging/ext-session-lock/ext-session-lock-v1.xml'
 	]
 
 	wl_protos_client_src = []

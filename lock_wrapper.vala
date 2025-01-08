@@ -377,6 +377,7 @@ public static int main(string[] args)
 	string session_id = null;
 	string backend = null;
 	bool allow_unlock = false;
+	uint idle_timeout = 0;
 	
 	// read config
 	try
@@ -392,6 +393,11 @@ public static int main(string[] args)
 		{
 			if (config.has_key ("General", "allow_unlock")) allow_unlock = config.get_boolean ("General", "allow_unlock");
 			if (config.has_key ("General", "backend")) backend = config.get_string ("General", "backend");
+			if (config.has_key ("General", "idle_lock_timeout"))
+			{
+				int tmp = config.get_integer ("General", "idle_lock_timeout");
+				idle_timeout = tmp > 0 ? tmp : 0;
+			}
 		}
 	}
 	catch (Error e)
@@ -415,6 +421,15 @@ public static int main(string[] args)
 		else if (args[i] == "-u")
 		{
 			allow_unlock = true;
+		}
+		else if (args[i] == "-I")
+		{
+			if (! uint.try_parse (args[i+1], out idle_timeout))
+			{
+				stderr.printf ("Invalid timeout argument: %s\n", args[i+1]);
+				return 1;
+			}
+			i++;
 		}
 		else
 		{
@@ -474,6 +489,19 @@ public static int main(string[] args)
 	else lw = new gtklock_backend (session_id, allow_unlock);
 	if (lw.init_failed) return 1; // error message already displayed
 	
+	if (idle_timeout > 0)
+	{
+		if (!IdleNotify.init())
+		{
+			log ("wayland-screenlock-proxy", LogLevelFlags.LEVEL_CRITICAL, "Compositor does not support the ext-idle-notify-v1 protocol, cannot automatically lock the screen on inactivity");
+		}
+		else
+		{
+			IdleNotify.set_callback (lw.do_lock);
+			IdleNotify.set_timeout (idle_timeout);
+		}
+	}
+	
 	var sigterm = new GLib.Unix.SignalSource (Posix.Signal.TERM);
 	sigterm.set_callback ( () => {
 		lw.loop.quit ();
@@ -483,6 +511,7 @@ public static int main(string[] args)
 	
 	lw.loop.run ();
 	lw.do_unlock ();
+	IdleNotify.fini ();
 	
 	return 0;
 }
