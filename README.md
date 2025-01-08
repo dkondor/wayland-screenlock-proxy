@@ -8,12 +8,9 @@ The following are supported:
  - Locking the screen in response to the `Lock` signal on the current session (e.g. when running `loginctl lock-session`).
  - Unlocking the screen in response to the `Unlock` signal (e.g. when running `loginctl unlock-session` -- only if the screenlocker allows a clean exit; not available with `waylock`).
  - Locking the screen when the system is suspended (in response to the `PrepareForSleep` signal), and delaying suspend until the screen is succesfully locked.
+ - Locking the screen after being idle for a specified time (using the `ext-idle-notify-v1` protocol)
  - Setting the `LockedHint` property on the corresponding session according to the lock state.
  - Restarting a screenlocker that crashed or exited without unlocking the screen.
-
-The following are not (yet) supported:
- - Locking the screen after an idle timeout. Use e.g. `swayidle timeout 300 'loginctl lock-session'` to achieve this.
- - Disallowing the `Unlock` signal.
 
 ## Requirements
 
@@ -32,7 +29,7 @@ Dependencies:
  - [meson](https://mesonbuild.com)
  - [Valac](https://gitlab.gnome.org/GNOME/vala)
  - Libraries (should be standard on most systems) `gio-2.0, gio-unix-2.0, glib-2.0 (version >= 2.78), gobject-2.0, wayland-client, wayland-scanner`
- - optionally, [wayland-protocols](https://gitlab.freedesktop.org/wayland/wayland-protocols) version >= 1.25, for the Gdm-based backend (see below)
+ - [wayland-protocols](https://gitlab.freedesktop.org/wayland/wayland-protocols) version >= 1.27
 
 ## Building and installing
 
@@ -72,10 +69,6 @@ E.g. you can set a keybinding in your compositor's configuration. To unlock the 
 loginctl unlock-session
 ```
 
-To lock your screen after it has been idle for some time, it is recommended to use [swayidle](https://github.com/swaywm/swayidle):
-```
-swayidle timeout 300 'loginctl lock-session'
-```
 
 ## Configuration
 
@@ -84,10 +77,12 @@ An example configuration is in the `config.ini` file provided here (installed un
 the following options are supported (all should be in the "General" section of the file):
  - `allow_unlock`: whether to allow unlocking the screen in response to the "Unlock" signal from systemd (e.g. by running `loginctl unlock-session`). If this is false, unlocking is only possible from the screen locker (default: false)
  - `backend`: name of the screenlocker program to use (see below; default: try all in the order shown below)
+ - `idle_lock_timeout`: automatically lock the screen after being idle for this time (in seconds; 0 to disable automatic locking)
 
 If run from the command line, the following parameters can be used:
  - `-u`: allow unlocking
  - `-b [backend]`: select the screenlocker to use
+ - `-I [timeout]`: set the idleness timeout
 
 E.g. to use swaylock, run as:
 ```
