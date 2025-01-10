@@ -372,147 +372,191 @@ static bool check_backend (string backend)
 	return res;
 }
 
-public static int main(string[] args)
-{
+
+public class ScreenlockProxy : Application {
 	string session_id = null;
-	string backend = null;
-	bool allow_unlock = false;
-	uint idle_timeout = 0;
+	// options read from the config file
+	string _backend = null;
+	bool _allow_unlock = false;
+	int _idle_timeout = 0;
+	// options from the command line
+	string _backend_override = null;
+	bool _allow_unlock_override = false;
+	int _idle_timeout_override = -1;
 	
-	// read config
-	try
+	string backend { get { return _backend_override ?? _backend; } }
+	bool allow_unlock { get { return _allow_unlock || _allow_unlock_override; } }
+	int idle_timeout { get { return (_idle_timeout_override >= 0) ? _idle_timeout_override : _idle_timeout; } }
+	
+	lock_wrapper_backend lw = null;
+	bool activated = false;
+	
+	private ScreenlockProxy ()
 	{
-		string config_location = Environment.get_variable ("XDG_CONFIG_HOME");
-		if (config_location == null) config_location = Environment.get_variable ("HOME") + "/.config";
-		config_location += "/wayland-screenlock-proxy/config.ini";
+		Object (application_id: "org.example.wayland_screenlock_proxy", flags: ApplicationFlags.DEFAULT_FLAGS);
 		
-		KeyFile config = new KeyFile ();
-		config.load_from_file (config_location, KeyFileFlags.NONE);
+		OptionEntry[] options = {
+			{"session-id", 'i', OptionFlags.NONE, OptionArg.STRING, ref session_id, "ID of the session to monitor for lock and unlock signals.", "ID"},
+			{"backend", 'b', OptionFlags.NONE, OptionArg.STRING, ref _backend_override, "Screenlocker program to use. Supported backends are: swaylock, gtklock and waylock.", "BACKEND"},
+			{"allow-unlock", 'u', OptionFlags.NONE, OptionArg.NONE, ref _allow_unlock_override, "Allow unlocking the screen in response to an \"org.freedesktop.login1.Session.Unlock\" signal.", null},
+			{"idle-timeout", 'I', OptionFlags.NONE, OptionArg.INT, ref _idle_timeout_override, "Lock the session automatically after being inactive for this time (in seconds; set to 0 to disable).", "TIME"}
+		};
 		
-		if (config.has_group ("General"))
+		add_main_option_entries (options);
+	}
+	
+	private void read_config (string fn, string section)
+	{
+		// read config
+		try
 		{
-			if (config.has_key ("General", "allow_unlock")) allow_unlock = config.get_boolean ("General", "allow_unlock");
-			if (config.has_key ("General", "backend")) backend = config.get_string ("General", "backend");
-			if (config.has_key ("General", "idle_lock_timeout"))
+			KeyFile config = new KeyFile ();
+			config.load_from_file (fn, KeyFileFlags.NONE);
+			
+			if (config.has_group (section))
 			{
-				int tmp = config.get_integer ("General", "idle_lock_timeout");
-				idle_timeout = tmp > 0 ? tmp : 0;
+				if (config.has_key (section, "allow_unlock")) _allow_unlock = config.get_boolean (section, "allow_unlock");
+				if (config.has_key (section, "backend")) _backend = config.get_string (section, "backend");
+				if (config.has_key (section, "idle_lock_timeout")) _idle_timeout = config.get_integer (section, "idle_lock_timeout");
 			}
 		}
-	}
-	catch (Error e)
-	{
-		log ("wayland-screenlock-proxy", LogLevelFlags.LEVEL_WARNING, "Cannot read config file, will use defaults (%s)\n", e.message);
+		catch (Error e)
+		{
+			log ("wayland-screenlock-proxy", LogLevelFlags.LEVEL_WARNING, "Cannot read config file, will use defaults (%s)\n", e.message);
+		}
 	}
 	
-	// process command line (overrides config)
-	for (int i = 1; i < args.length; i++)
+	public override void startup ()
 	{
-		if (args[i] == "-i")
+		print ("Startup\n");
+		base.startup ();
+		
+		bool have_custom_config = false;
+		
+		// check if the compositor integration feature is installed and use
+		// the compositor-specific configuration if yes
+		try
 		{
-			session_id = args[i+1];
-			i++;
-		}
-		else if (args[i] == "-b")
-		{
-			backend = args[i+1];
-			i++;
-		}
-		else if (args[i] == "-u")
-		{
-			allow_unlock = true;
-		}
-		else if (args[i] == "-I")
-		{
-			if (! uint.try_parse (args[i+1], out idle_timeout))
+			string fn = Config.DATADIR + "/screenlock_integration.ini";
+			KeyFile int_config = new KeyFile ();
+			int_config.load_from_file (fn, KeyFileFlags.NONE);
+			bool have_wayfire = int_config.get_boolean ("compositor_integration", "wayfire");
+			if (have_wayfire)
 			{
-				stderr.printf ("Invalid timeout argument: %s\n", args[i+1]);
-				return 1;
+				string wayfire_config = Environment.get_variable ("WAYFIRE_CONFIG_FILE");
+				if (wayfire_config != null)
+				{
+					read_config (wayfire_config, "screenlock_integration");
+					have_custom_config = true;
+				}
 			}
-			i++;
 		}
-		else
+		catch (Error e)
 		{
-			stderr.printf ("Unknown parameter: %s\n", args[i]);
-			return 1;
+			// having an error here is normal if the above configuration file does not exist
+			log ("wayland-screenlock-proxy", LogLevelFlags.LEVEL_DEBUG, "Cannot load compositor integration config (%s)\n", e.message);
 		}
+		
+		if (!have_custom_config)
+		{
+			string config_location = Environment.get_variable ("XDG_CONFIG_HOME");
+			if (config_location == null) config_location = Environment.get_variable ("HOME") + "/.config";
+			config_location += "/wayland-screenlock-proxy/config.ini";
+			read_config (config_location, "General");
+		}
+		
+		if (session_id == null)
+			session_id = Environment.get_variable ("XDG_SESSION_ID");
 	}
 	
-	if (session_id == null)
+	public override void activate ()
 	{
-		session_id = Environment.get_variable ("XDG_SESSION_ID");
+		print ("Activate\n");
+		if (activated) return;
+		activated = true;
+		
 		if (session_id == null)
 		{
 			log ("wayland-screenlock-proxy", LogLevelFlags.LEVEL_CRITICAL, "No session ID provided!\n");
-			return 1;
+			return;
 		}
-	}
-	
-	if (backend != null)
-	{
-		if (backend == "swaylock" || backend == "gtklock" || backend == "waylock")
+		
+		// startup
+		if (backend != null && backend != "auto")
 		{
-			if (! check_backend (backend))
+			if (backend == "swaylock" || backend == "gtklock" || backend == "waylock")
 			{
-				log ("wayland-screenlock-proxy", LogLevelFlags.LEVEL_CRITICAL, "Requested screenlocker ('%s') is not available\n", backend);
-				return 1;
+				if (! check_backend (backend))
+				{
+					log ("wayland-screenlock-proxy", LogLevelFlags.LEVEL_CRITICAL, "Requested screenlocker ('%s') is not available\n", backend);
+					return;
+				}
+			}
+			else
+#if ENABLE_GDM
+			if (backend != "gdm")
+#endif
+			{
+				log ("wayland-screenlock-proxy", LogLevelFlags.LEVEL_CRITICAL, "Unknown screenlocker backend requested: %s\n", backend);
+				return;
+			}
+		} else
+		{
+			if (check_backend ("gtklock")) _backend = "gtklock";
+			else if (check_backend ("swaylock")) _backend = "swaylock";
+			else if (check_backend ("waylock")) _backend = "waylock";
+			else
+			{
+				//  note: Gdm backend is not used by default
+				log ("wayland-screenlock-proxy", LogLevelFlags.LEVEL_CRITICAL, "No supported screenlocker found");
+				return;
 			}
 		}
-		else
+		
 #if ENABLE_GDM
-		if (backend != "gdm")
-#endif
-		{
-			log ("wayland-screenlock-proxy", LogLevelFlags.LEVEL_CRITICAL, "Unknown screenlocker backend requested: %s\n", backend);
-			return 1;
-		}
-	} else
-	{
-		if (check_backend ("gtklock")) backend = "gtklock";
-		else if (check_backend ("swaylock")) backend = "swaylock";
-		else if (check_backend ("waylock")) backend = "waylock";
+		if (backend == "gdm") lw = new gdm_lock (session_id, true); // always allow unlocking
 		else
+#endif
+		if (backend == "swaylock") lw = new swaylock_backend (session_id, allow_unlock);
+		else if (backend == "waylock") lw = new waylock_backend (session_id, allow_unlock);
+		else lw = new gtklock_backend (session_id, allow_unlock);
+		if (lw.init_failed)
+			return; // error message already displayed
+		
+		if (idle_timeout > 0)
 		{
-			//  note: Gdm backend is not used by default
-			log ("wayland-screenlock-proxy", LogLevelFlags.LEVEL_CRITICAL, "No supported screenlocker found");
-			return 1;
+			if (!IdleNotify.init())
+			{
+				log ("wayland-screenlock-proxy", LogLevelFlags.LEVEL_CRITICAL, "Compositor does not support the ext-idle-notify-v1 protocol, cannot automatically lock the screen on inactivity");
+			}
+			else
+			{
+				IdleNotify.set_callback (lw.do_lock);
+				IdleNotify.set_timeout (idle_timeout);
+			}
 		}
+		
+		var sigterm = new GLib.Unix.SignalSource (Posix.Signal.TERM);
+		sigterm.set_callback ( () => {
+			this.quit ();
+			return false;
+		});
+		sigterm.attach (null);
+		hold ();
 	}
 	
-	lock_wrapper_backend lw = null;
-#if ENABLE_GDM
-	if (backend == "gdm") lw = new gdm_lock (session_id, true); // always allow unlocking
-	else
-#endif
-	if (backend == "swaylock") lw = new swaylock_backend (session_id, allow_unlock);
-	else if (backend == "waylock") lw = new waylock_backend (session_id, allow_unlock);
-	else lw = new gtklock_backend (session_id, allow_unlock);
-	if (lw.init_failed) return 1; // error message already displayed
-	
-	if (idle_timeout > 0)
+	public override void shutdown ()
 	{
-		if (!IdleNotify.init())
-		{
-			log ("wayland-screenlock-proxy", LogLevelFlags.LEVEL_CRITICAL, "Compositor does not support the ext-idle-notify-v1 protocol, cannot automatically lock the screen on inactivity");
-		}
-		else
-		{
-			IdleNotify.set_callback (lw.do_lock);
-			IdleNotify.set_timeout (idle_timeout);
-		}
+		base.shutdown ();
+		if (lw != null) lw.do_unlock ();
+		IdleNotify.fini ();
+	}	
+	
+	public static int main(string[] args)
+	{
+		var app = new ScreenlockProxy ();
+		return app.run (args);
 	}
-	
-	var sigterm = new GLib.Unix.SignalSource (Posix.Signal.TERM);
-	sigterm.set_callback ( () => {
-		lw.loop.quit ();
-		return false;
-	});
-	sigterm.attach (null);
-	
-	lw.loop.run ();
-	lw.do_unlock ();
-	IdleNotify.fini ();
-	
-	return 0;
 }
 
+			
