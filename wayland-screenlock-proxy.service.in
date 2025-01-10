@@ -6,7 +6,7 @@ Requisite=graphical-session.target
 
 [Service]
 ExecStart=@libexec@/wayland-screenlock-proxy
-Type=exec
+BusName=org.example.wayland_screenlock_proxy
 
 [Install]
 WantedBy=graphical-session.target
