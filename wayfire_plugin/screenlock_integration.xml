@@ -1,0 +1,48 @@
+<?xml version="1.0"?>
+<wayfire>
+	<plugin name="screenlock_integration">
+		<_short>Lockscreen integration</_short>
+		<_long>A plugin to configure locking the screen.</_long>
+		<category>Desktop</category>
+		<group>
+			<_short>General</_short>
+			<option name="lock" type="key">
+				<_short>Lock the screen</_short>
+				<_long>Keybinding to lock the screen.</_long>
+				<default>&lt;super&gt; KEY_L</default>
+			</option>
+			<option name="backend" type="string">
+				<_short>Program to lock the screen</_short>
+				<_long>Screenlocker to perform locking. Must be installed separately.</_long>
+				<default>auto</default>
+				<desc>
+					<value>auto</value>
+					<_name>Auto</_name>
+				</desc>
+				<desc>
+					<value>swaylock</value>
+					<_name>swaylock</_name>
+				</desc>
+				<desc>
+					<value>gtklock</value>
+					<_name>gtklock</_name>
+				</desc>
+				<desc>
+					<value>waylock</value>
+					<_name>waylock</_name>
+				</desc>
+			</option>
+			<option name="allow_unlock" type="bool">
+				<_short>Allow unlocking the screen by the session manager</_short>
+				<_long>If set, the screen will be unlocked in response to the "org.freedesktop.login1.Session.Unlock" signal.</_long>
+				<default>false</default>
+			</option>
+			<option name="idle_lock_timeout" type="int">
+				<_short>Timeout to lock the screen</_short>
+				<_long>If set, automatically locks the screen after this time of idleness.</_long>
+				<default>300</default>
+				<min>0</min>
+			</option>
+		</group>
+	</plugin>
+</wayfire>
