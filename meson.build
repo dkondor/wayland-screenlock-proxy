@@ -2,11 +2,13 @@ project(
 	'wayland-screenlock-proxy',
 	'c',
 	'vala',
+	'cpp',
 	version: '0.2.0',
 	license: 'GPLv3+',
 	meson_version: '>=1.0.0',
 	default_options: [
         'c_std=c11',
+        'cpp_std=c++17',
 	],
 )
 
@@ -17,12 +19,24 @@ gobject  = dependency('gobject-2.0')
 posix    = meson.get_compiler('vala').find_library('posix')
 deps     = [glib, gobject, gio, gio_unix, posix]
 
+
+conf_data = configuration_data()
+conf_data.set('libexec', get_option('prefix') / 'libexec')
+conf_data.set('datadir', get_option('prefix') / get_option('datadir') / 'wayland-screenlock-proxy')
+
+configure_file(configuration: conf_data, input: 'wayland-screenlock-proxy.service.in',
+	output: '@BASENAME@', install_dir: 'lib/systemd/user')
+configure_file(configuration: conf_data, input: 'config.h.in', output: 'config.h')
+
+
 add_project_arguments(['--vapidir', meson.current_source_dir()], language: 'vala')
 add_project_arguments(['--pkg', 'idle_notify'], language: 'vala')
 if get_option('enable_gdm')
 	add_project_arguments(['-D', 'ENABLE_GDM'], language: 'vala')
 	add_project_arguments(['--pkg', 'simple_lock'], language: 'vala')
 endif
+
+add_project_arguments(['--pkg', 'config',],	language: 'vala')
 
 
 # wayland-scanner -- needed for using the ext-session-lock protocol
@@ -95,11 +109,8 @@ lock_wrapper = executable('wayland-screenlock-proxy', ['lock_wrapper.vala', 'dbu
 		dependencies: deps,
 		install: true, install_dir: 'libexec')
 
-conf_data = configuration_data()
-conf_data.set('libexec', get_option('prefix') / 'libexec')
-
-configure_file(configuration: conf_data, input: 'wayland-screenlock-proxy.service.in',
-	output: '@BASENAME@', install_dir: 'lib/systemd/user')
-
 install_data('config.ini')
+
+subdir('wayfire_plugin')
+
 

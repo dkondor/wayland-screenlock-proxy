@@ -1,0 +1,7 @@
+#ifndef WAYLAND_SCREENLOCK_PROXY_CONFIG_H
+#define WAYLAND_SCREENLOCK_PROXY_CONFIG_H
+
+#define PROXY_BINARY "@libexec@/wayland-screenlock-proxy"
+#define DATADIR "@datadir@"
+
+#endif
