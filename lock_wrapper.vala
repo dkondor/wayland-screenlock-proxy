@@ -734,6 +734,11 @@ public class ScreenlockProxy : Application
 	
 	public static int main(string[] args)
 	{
+		if (Environment.get_variable ("WAYLAND_DISPLAY") == null)
+		{
+			log ("wayland-screenlock-proxy", LogLevelFlags.LEVEL_CRITICAL, "WAYLAND_DISPLAY unset, not running in a Wayland session?\n");
+			return 1;
+		}
 		var app = new ScreenlockProxy ();
 		return app.run (args);
 	}
