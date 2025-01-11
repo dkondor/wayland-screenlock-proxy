@@ -111,6 +111,9 @@ lock_wrapper = executable('wayland-screenlock-proxy', ['lock_wrapper.vala', 'dbu
 
 install_data('config.ini')
 
-subdir('wayfire_plugin')
+wayfire = dependency('wayfire', version: '>=0.8.0', required: get_option('enable_wayfire_plugin'))
+if wayfire.found()
+	subdir('wayfire_plugin')
+endif
 
 

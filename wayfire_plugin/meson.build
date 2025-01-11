@@ -1,6 +1,3 @@
-
-wayfire  = dependency('wayfire', version: '>=0.8.0')
-
 locklib = shared_module('screenlock_integration', 'screenlock_integration.cpp',
 	dependencies: [wayfire],
 	install: true,

@@ -1,1 +1,2 @@
 option('enable_gdm', type: 'boolean', value: false, description: 'Enable locking with Gdm')
+option('enable_wayfire_plugin', type: 'feature', value: 'auto', description: 'Build a plugin for integration with Wayfire')
