@@ -1,3 +1,9 @@
+0.3.0
+=========
+ * Support locking when the session is idle
+ * Support dynamically reloading the configuration
+ * Add a plugin for integrating more closely with Wayfire
+
 0.2.0
 =========
 Support using a config file
