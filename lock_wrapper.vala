@@ -22,23 +22,72 @@ using GLib;
 
 abstract class lock_wrapper_backend : Object
 {
-	public bool is_locked { get; protected set; default = false; }
-	public MainLoop loop { get; construct; }
 	public bool init_failed { get; protected set; default = false; }
-	
-	protected interfaces.Manager manager = null;
-	protected interfaces.Session session = null;
-	protected UnixInputStream inhibitor  = null;
-	protected bool should_stop_inhibitor = false;
-	private string session_id = null;
-	protected GLib.ObjectPath session_path = null;
-	
+	public bool always_allow_unlock { get; construct; default = false; }
+	public lock_wrapper_listener parent { get; construct; }
 	public abstract void do_lock ();
 	public abstract void do_unlock ();
 	
-	protected lock_wrapper_backend (string _session_id, bool allow_unlock)
+	protected lock_wrapper_backend (lock_wrapper_listener _parent, bool _always_allow_unlock = false) {
+		Object (
+			parent: _parent,
+			always_allow_unlock: _always_allow_unlock
+		);
+	}
+	
+	protected void check_child_status (int status)
+	{
+		bool res = true;
+		try { res = Process.check_wait_status (status); }
+		catch (Error e) { res = false; } // we don't differentiate between non-zero exit and crash
+		
+		if (res)
+		{
+			// successful exit, we are now unlocked
+			parent.set_locked_state (false);
+		}
+		else
+		{
+			// try to lock again, since the screenlocker crashing will
+			// leave the screen in a locked state
+			do_lock ();
+		}
+	}
+	
+}
+
+
+class lock_wrapper_listener : Object
+{
+	public bool init_failed { get; protected set; default = false; }
+	public bool allow_unlock = false;
+	public bool is_locked { get; protected set; default = false; }
+	
+	private interfaces.Manager manager = null;
+	private interfaces.Session session = null;
+	private UnixInputStream inhibitor  = null;
+	private bool should_stop_inhibitor = false;
+	private string session_id = null;
+	public GLib.ObjectPath session_path { get; protected set; default = null; }
+	public signal void locked_changed (bool locked);
+	
+	public lock_wrapper_backend backend = null;
+	
+	public void do_lock_base () {
+		if (backend != null) backend.do_lock ();
+	}
+	public void do_unlock_base () {
+		// ensure that the backend survives until the end of the call
+		// as we might end up in ScreenlockProxy.replace_backend which
+		// would destroy it
+		lock_wrapper_backend tmp = backend;
+		if (tmp != null && (allow_unlock || tmp.always_allow_unlock)) tmp.do_unlock ();
+	}
+	
+	public lock_wrapper_listener (string _session_id, bool _allow_unlock)
 	{
 		session_id = _session_id;
+		allow_unlock = _allow_unlock;
 		
 		try
 		{
@@ -50,7 +99,6 @@ abstract class lock_wrapper_backend : Object
 		catch (Error e)
 		{
 			log ("wayland-screenlock-proxy", LogLevelFlags.LEVEL_CRITICAL, "Cannot create Dbus proxies: %s\n", e.message);
-			loop.quit();
 			init_failed = true;
 			return;
 		}
@@ -61,11 +109,9 @@ abstract class lock_wrapper_backend : Object
 		{
 			log ("wayland-screenlock-proxy", LogLevelFlags.LEVEL_CRITICAL, "Cannot create sleep inhibitor: %s\n", e.message);
 		}
-		session.lock.connect (do_lock);
-		if (allow_unlock) session.unlock.connect (do_unlock);
+		session.lock.connect (do_lock_base);
+		session.unlock.connect (do_unlock_base);
 	}
-	
-	construct { loop = new MainLoop (); }
 	
 	private void sleep_status_changed (bool start)
 	{
@@ -77,7 +123,7 @@ abstract class lock_wrapper_backend : Object
 				return;
 			}
 			should_stop_inhibitor = true;
-			do_lock ();
+			do_lock_base ();
 		}
 		else
 		{
@@ -100,32 +146,23 @@ abstract class lock_wrapper_backend : Object
 		should_stop_inhibitor = false;
 	}
 	
-	protected void check_child_status (int status)
+	public void set_locked_state (bool locked)
 	{
-		bool res = true;
-		try { res = Process.check_wait_status (status); }
-		catch (Error e) { res = false; } // we don't differentiate between non-zero exit and crash
+		try {
+			session.set_locked_hint (locked);
+			if (locked && should_stop_inhibitor) stop_inhibitor ();
+		}
+		catch (Error e)
+		{
+			log ("wayland-screenlock-proxy", LogLevelFlags.LEVEL_CRITICAL, "Error with DBus communication: %s\n", e.message);
+			// TODO: loop.quit (); // it does not make sense to try to continue, might be better to try respawning
+		}
 		
-		if (res)
-		{
-			// successful exit, we are now unlocked
-			is_locked = false;
-			try { session.set_locked_hint (false); }
-			catch (Error e)
-			{
-				log ("wayland-screenlock-proxy", LogLevelFlags.LEVEL_CRITICAL, "Error with DBus communication: %s\n", e.message);
-				loop.quit (); // it does not make sense to try to continue, might be better to try respawning
-			}
-		}
-		else
-		{
-			// try to lock again, since the screenlocker crashing will
-			// leave the screen in a locked state
-			do_lock ();
-		}
+		is_locked = locked;
+		locked_changed (locked);
 	}
 	
-	~lock_wrapper_backend ()
+	~lock_wrapper_listener ()
 	{
 		manager.prepare_for_sleep.disconnect (sleep_status_changed);
 		if (inhibitor != null) stop_inhibitor ();
@@ -139,9 +176,9 @@ class pipefd_backend_base : lock_wrapper_backend
 	protected string pipe_arg = null;
 	protected int sig = Posix.Signal.TERM;
 	
-	protected pipefd_backend_base (string _session_id, bool allow_unlock)
+	protected pipefd_backend_base (lock_wrapper_listener _parent)
 	{
-		base (_session_id, allow_unlock);
+		base (_parent);
 	}
 	
 	public override void do_lock ()
@@ -181,19 +218,7 @@ class pipefd_backend_base : lock_wrapper_backend
 		IOChannel ready = new IOChannel.unix_new (pipe_fds[0]);
 		ready.set_close_on_unref (true);
 		ready.add_watch (IOCondition.IN, (ch, cond) => {
-			try
-			{
-				if (child_pid > 0)
-				{
-					session.set_locked_hint (true);
-					is_locked = true;
-					if (should_stop_inhibitor) stop_inhibitor ();
-				}
-			} catch (Error e)
-			{
-				log ("wayland-screenlock-proxy", LogLevelFlags.LEVEL_CRITICAL, "Error with DBus communication: %s\n", e.message);
-				loop.quit (); // it does not make sense to try to continue, might be better to try restarting
-			}
+			if (child_pid > 0) parent.set_locked_state (true);
 			return false;
 		});
 		
@@ -216,14 +241,15 @@ class pipefd_backend_base : lock_wrapper_backend
 		if (sig == -1) return; // e.g. waylock does not support a clean shutdown
 		Posix.kill (child_pid, sig);
 		child_pid = -1; // so that we are able to lock again right away
+		parent.set_locked_state (false);
 	}
 }
 
 class swaylock_backend : pipefd_backend_base
 {
-	public swaylock_backend (string _session_id, bool allow_unlock)
+	public swaylock_backend (lock_wrapper_listener _parent)
 	{
-		base (_session_id, allow_unlock);
+		base (_parent);
 		exec = "swaylock";
 		pipe_arg = "-R";
 		sig = Posix.Signal.USR1;
@@ -232,9 +258,9 @@ class swaylock_backend : pipefd_backend_base
 
 class waylock_backend : pipefd_backend_base
 {
-	public waylock_backend (string _session_id, bool allow_unlock)
+	public waylock_backend (lock_wrapper_listener _parent)
 	{
-		base (_session_id, allow_unlock); // note: allow_unlock is ignored
+		base (_parent);
 		exec = "waylock";
 		pipe_arg = "-ready-fd";
 		sig = -1; // not possible to unlock by us
@@ -246,15 +272,14 @@ class gtklock_backend : lock_wrapper_backend
 	private Pid child_pid = -1;
 	private interfaces.Properties props = null;
 	
-	public gtklock_backend (string _session_id, bool allow_unlock)
+	public gtklock_backend (lock_wrapper_listener _parent)
 	{
-		base (_session_id, allow_unlock);
+		base (_parent);
 		
-		try { props = Bus.get_proxy_sync (BusType.SYSTEM, "org.freedesktop.login1", session_path); }
+		try { props = Bus.get_proxy_sync (BusType.SYSTEM, "org.freedesktop.login1", parent.session_path); }
 		catch (Error e)
 		{
 			log ("wayland-screenlock-proxy", LogLevelFlags.LEVEL_CRITICAL, "Failed to create DBus proxies: %s\n", e.message);
-			loop.quit ();
 			init_failed = true;
 			return;
 		}
@@ -293,6 +318,7 @@ class gtklock_backend : lock_wrapper_backend
 		if (child_pid == -1) return;
 		Posix.kill (child_pid, Posix.Signal.TERM);
 		child_pid = -1; // so that we are able to lock again right away
+		parent.set_locked_state (false);
 	}
 	
 	private void props_changed (string interface_name, GLib.HashTable<string, GLib.Variant> changed_properties, string[] invalidated_properties)
@@ -302,8 +328,7 @@ class gtklock_backend : lock_wrapper_backend
 			unowned GLib.Variant? val = changed_properties.get ("LockedHint");
 			if (val != null && val.get_boolean())
 			{
-				// successfully locked, might need to remove our inhibitor
-				if (should_stop_inhibitor) stop_inhibitor ();
+				parent.set_locked_state (true);
 			}
 		}
 	}
@@ -314,9 +339,9 @@ class gdm_lock : lock_wrapper_backend
 {
 	private interfaces.LocalDisplayFactory dsp = null;
 	
-	public gdm_lock (string _session_id, bool allow_unlock)
+	public gdm_lock (lock_wrapper_listener _parent)
 	{
-		base (_session_id, true); // always need to allow to unlock the screen
+		base (_parent, true);
 		
 		if (!SimpleLock.init ()) init_failed = true;
 		else
@@ -327,7 +352,13 @@ class gdm_lock : lock_wrapper_backend
 				log ("wayland-screenlock-proxy", LogLevelFlags.LEVEL_CRITICAL, "Cannot create Gdm DBus proxy: %s\n", e.message);
 				init_failed = true;
 			}
+			SimpleLock.set_callback (lock_cb);
 		}
+	}
+	
+	private void lock_cb (bool locked)
+	{
+		parent.set_locked_state (locked);
 	}
 	
 	public override void do_lock ()
@@ -350,45 +381,46 @@ class gdm_lock : lock_wrapper_backend
 	
 	~gdm_lock ()
 	{
+		SimpleLock.set_callback (null);
 		SimpleLock.fini ();
 	}
 }
 #endif
 
-static bool check_backend (string backend)
+
+public class ScreenlockProxy : Application
 {
-	string args[] = {"which", "-s", backend, null};
-	int status;
-	bool res = false;
-	try {
-		if (Process.spawn_sync (null, args, null, SpawnFlags.SEARCH_PATH | SpawnFlags.STDOUT_TO_DEV_NULL | SpawnFlags.STDERR_TO_DEV_NULL,
-				null, null, null, out status))
-			res = Process.check_wait_status (status);
-	}
-	catch (Error e)
-	{
-		log ("wayland-screenlock-proxy", LogLevelFlags.LEVEL_CRITICAL, "Cannot run 'which': %s\n", e.message);
-	}
-	return res;
-}
-
-
-public class ScreenlockProxy : Application {
 	string session_id = null;
+	
+	string config_file_name = null; // set when reading the config for the first time
+	string config_file_group = null;
+	FileMonitor config_file_monitor = null;
+	FileMonitor config_dir_monitor = null;
+	uint file_changed_source = 0;
+	
+	struct Options
+	{
+		string backend;
+		bool allow_unlock;
+		int idle_timeout;
+	}
+	
 	// options read from the config file
-	string _backend = null;
-	bool _allow_unlock = false;
-	int _idle_timeout = 0;
+	Options config_file = { null, false, 0 };
 	// options from the command line
-	string _backend_override = null;
-	bool _allow_unlock_override = false;
-	int _idle_timeout_override = -1;
+	Options config_cmdline = { null, false, -1 };
 	
-	string backend { get { return _backend_override ?? _backend; } }
-	bool allow_unlock { get { return _allow_unlock || _allow_unlock_override; } }
-	int idle_timeout { get { return (_idle_timeout_override >= 0) ? _idle_timeout_override : _idle_timeout; } }
+	string pending_backend = null;
+	ulong pending_backend_signal = 0;
 	
-	lock_wrapper_backend lw = null;
+	string backend { get { return config_cmdline.backend ?? config_file.backend; } }
+	bool allow_unlock { get { return config_cmdline.allow_unlock || config_file.allow_unlock; } }
+	uint idle_timeout { get {
+		int ret = (config_cmdline.idle_timeout >= 0) ? config_cmdline.idle_timeout : config_file.idle_timeout;
+		return (ret >= 0) ? ret : 0;
+	} }
+	
+	lock_wrapper_listener listener = null;
 	bool activated = false;
 	
 	private ScreenlockProxy ()
@@ -397,27 +429,27 @@ public class ScreenlockProxy : Application {
 		
 		OptionEntry[] options = {
 			{"session-id", 'i', OptionFlags.NONE, OptionArg.STRING, ref session_id, "ID of the session to monitor for lock and unlock signals.", "ID"},
-			{"backend", 'b', OptionFlags.NONE, OptionArg.STRING, ref _backend_override, "Screenlocker program to use. Supported backends are: swaylock, gtklock and waylock.", "BACKEND"},
-			{"allow-unlock", 'u', OptionFlags.NONE, OptionArg.NONE, ref _allow_unlock_override, "Allow unlocking the screen in response to an \"org.freedesktop.login1.Session.Unlock\" signal.", null},
-			{"idle-timeout", 'I', OptionFlags.NONE, OptionArg.INT, ref _idle_timeout_override, "Lock the session automatically after being inactive for this time (in seconds; set to 0 to disable).", "TIME"}
+			{"backend", 'b', OptionFlags.NONE, OptionArg.STRING, ref config_cmdline.backend, "Screenlocker program to use. Supported backends are: swaylock, gtklock and waylock.", "BACKEND"},
+			{"allow-unlock", 'u', OptionFlags.NONE, OptionArg.NONE, ref config_cmdline.allow_unlock, "Allow unlocking the screen in response to an \"org.freedesktop.login1.Session.Unlock\" signal.", null},
+			{"idle-timeout", 'I', OptionFlags.NONE, OptionArg.INT, ref config_cmdline.idle_timeout, "Lock the session automatically after being inactive for this time (in seconds; set to 0 to disable).", "TIME"}
 		};
 		
 		add_main_option_entries (options);
 	}
 	
-	private void read_config (string fn, string section)
+	private void read_config (ref Options conf)
 	{
 		// read config
 		try
 		{
 			KeyFile config = new KeyFile ();
-			config.load_from_file (fn, KeyFileFlags.NONE);
+			config.load_from_file (config_file_name, KeyFileFlags.NONE);
 			
-			if (config.has_group (section))
+			if (config.has_group (config_file_group))
 			{
-				if (config.has_key (section, "allow_unlock")) _allow_unlock = config.get_boolean (section, "allow_unlock");
-				if (config.has_key (section, "backend")) _backend = config.get_string (section, "backend");
-				if (config.has_key (section, "idle_lock_timeout")) _idle_timeout = config.get_integer (section, "idle_lock_timeout");
+				if (config.has_key (config_file_group, "allow_unlock")) conf.allow_unlock = config.get_boolean (config_file_group, "allow_unlock");
+				if (config.has_key (config_file_group, "backend")) conf.backend = config.get_string (config_file_group, "backend");
+				if (config.has_key (config_file_group, "idle_lock_timeout")) conf.idle_timeout = config.get_integer (config_file_group, "idle_lock_timeout");
 			}
 		}
 		catch (Error e)
@@ -426,12 +458,122 @@ public class ScreenlockProxy : Application {
 		}
 	}
 	
+	private void replace_backend (string new_backend)
+	{
+		var lw1 = start_backend (new_backend);
+		if (lw1 != null)
+		{
+			listener.backend = lw1;
+			config_file.backend = new_backend;
+		}
+		else log ("wayland-screenlock-proxy", LogLevelFlags.LEVEL_CRITICAL, "Cannot start requested screenlocker ('%s')\n", new_backend);
+	}
+	
+	private void config_changed (bool dir_change)
+	{
+		if (activated)
+		{
+			// already running, need to possibly change settings
+			Options new_conf = { null, false, -1 };
+			read_config (ref new_conf);
+			
+			config_file.allow_unlock = new_conf.allow_unlock;
+			listener.allow_unlock = allow_unlock; // will read the value possibly overriden from the command line
+			
+			config_file.idle_timeout = new_conf.idle_timeout;
+			IdleNotify.set_timeout (idle_timeout);
+			
+			if (config_cmdline.backend == null && new_conf.backend != config_file.backend)
+			{
+				if (check_backend (new_conf.backend))
+				{
+					if (listener.is_locked)
+					{
+						pending_backend = new_conf.backend;
+						if (pending_backend_signal == 0)
+							pending_backend_signal = listener.locked_changed.connect ((listener, is_locked) => {
+								if (pending_backend != null)
+								{
+									if (is_locked) return;
+									replace_backend (pending_backend);
+									pending_backend = null;
+								}
+								listener.disconnect (pending_backend_signal);
+								pending_backend_signal = 0;
+							});
+					}
+					else
+					{
+						replace_backend (new_conf.backend);
+						pending_backend = null;
+					}
+				}
+				else log ("wayland-screenlock-proxy", LogLevelFlags.LEVEL_CRITICAL, "Requested screenlocker ('%s') is not available\n", new_conf.backend);
+			}
+		}
+		else read_config (ref config_file);
+		
+		if (config_dir_monitor != null && config_file_monitor != null && !dir_change)
+			return;
+		
+		var file = File.new_for_path (config_file_name);
+		try
+		{
+			if (config_dir_monitor == null)
+			{
+				var dir = file.get_parent ();
+				config_dir_monitor = dir.monitor_directory (FileMonitorFlags.WATCH_MOVES);
+				config_dir_monitor.changed.connect (config_dir_changed);
+			}
+			if (config_file_monitor == null || dir_change)
+			{
+				config_file_monitor = file.monitor_file (FileMonitorFlags.NONE);
+				config_file_monitor.changed.connect (config_file_changed);
+			}
+		} catch (Error e)
+		{
+			log ("wayland-screenlock-proxy", LogLevelFlags.LEVEL_WARNING, "Cannot watch for changes in the config file, will not update settings from it\n");
+		}
+	}
+	
+	private void config_file_changed (FileMonitor monitor, File file, File? other_file, FileMonitorEvent event)
+	{
+		if (event == FileMonitorEvent.CHANGED || event == FileMonitorEvent.CHANGES_DONE_HINT)
+		{
+			if (file_changed_source == 0)
+				file_changed_source = Timeout.add (1000, () => {
+					config_changed (false);
+					file_changed_source = 0;
+					return false;
+				});
+		}
+		else if (event == FileMonitorEvent.DELETED)
+		{
+			if (file_changed_source != 0)
+			{
+				Source.remove (file_changed_source);
+				file_changed_source = 0;
+			}
+			config_file_monitor = null;
+		}
+	}
+	
+	private void config_dir_changed (FileMonitor monitor, File file, File? other_file, FileMonitorEvent event)
+	{
+		bool changed = false;
+		if (event == FileMonitorEvent.CREATED || event == FileMonitorEvent.MOVED_IN)
+			if (file.get_path () == config_file_name) changed = true;
+		
+		if (event == FileMonitorEvent.RENAMED)
+			if (other_file.get_path () == config_file_name) changed = true;
+		
+		if (changed) config_changed (true);
+	}
+	
 	public override void startup ()
 	{
 		print ("Startup\n");
 		base.startup ();
-		
-		bool have_custom_config = false;
 		
 		// check if the compositor integration feature is installed and use
 		// the compositor-specific configuration if yes
@@ -446,8 +588,8 @@ public class ScreenlockProxy : Application {
 				string wayfire_config = Environment.get_variable ("WAYFIRE_CONFIG_FILE");
 				if (wayfire_config != null)
 				{
-					read_config (wayfire_config, "screenlock_integration");
-					have_custom_config = true;
+					config_file_name = wayfire_config;
+					config_file_group = "screenlock_integration";
 				}
 			}
 		}
@@ -457,16 +599,32 @@ public class ScreenlockProxy : Application {
 			log ("wayland-screenlock-proxy", LogLevelFlags.LEVEL_DEBUG, "Cannot load compositor integration config (%s)\n", e.message);
 		}
 		
-		if (!have_custom_config)
+		if (config_file_name == null)
 		{
 			string config_location = Environment.get_variable ("XDG_CONFIG_HOME");
 			if (config_location == null) config_location = Environment.get_variable ("HOME") + "/.config";
-			config_location += "/wayland-screenlock-proxy/config.ini";
-			read_config (config_location, "General");
+			config_file_name = config_location + "/wayland-screenlock-proxy/config.ini";
+			config_file_group = "General";
 		}
+		
+		config_changed (true);
 		
 		if (session_id == null)
 			session_id = Environment.get_variable ("XDG_SESSION_ID");
+	}
+	
+	private lock_wrapper_backend? start_backend (string new_backend)
+	{
+		lock_wrapper_backend lw1 = null;
+#if ENABLE_GDM
+		if (new_backend == "gdm") lw1 = new gdm_lock (listener);
+		else
+#endif
+		if (new_backend == "swaylock") lw1 = new swaylock_backend (listener);
+		else if (new_backend == "waylock") lw1 = new waylock_backend (listener);
+		else lw1 = new gtklock_backend (listener);
+		if (lw1.init_failed) return null;
+		return lw1;
 	}
 	
 	public override void activate ()
@@ -484,27 +642,16 @@ public class ScreenlockProxy : Application {
 		// startup
 		if (backend != null && backend != "auto")
 		{
-			if (backend == "swaylock" || backend == "gtklock" || backend == "waylock")
+			if (! check_backend (backend))
 			{
-				if (! check_backend (backend))
-				{
-					log ("wayland-screenlock-proxy", LogLevelFlags.LEVEL_CRITICAL, "Requested screenlocker ('%s') is not available\n", backend);
-					return;
-				}
-			}
-			else
-#if ENABLE_GDM
-			if (backend != "gdm")
-#endif
-			{
-				log ("wayland-screenlock-proxy", LogLevelFlags.LEVEL_CRITICAL, "Unknown screenlocker backend requested: %s\n", backend);
+				log ("wayland-screenlock-proxy", LogLevelFlags.LEVEL_CRITICAL, "Requested screenlocker ('%s') is not available or not known\n", backend);
 				return;
 			}
 		} else
 		{
-			if (check_backend ("gtklock")) _backend = "gtklock";
-			else if (check_backend ("swaylock")) _backend = "swaylock";
-			else if (check_backend ("waylock")) _backend = "waylock";
+			if      (check_known_backend ("gtklock"))  config_file.backend = "gtklock";
+			else if (check_known_backend ("swaylock")) config_file.backend = "swaylock";
+			else if (check_known_backend ("waylock"))  config_file.backend = "waylock";
 			else
 			{
 				//  note: Gdm backend is not used by default
@@ -513,27 +660,19 @@ public class ScreenlockProxy : Application {
 			}
 		}
 		
-#if ENABLE_GDM
-		if (backend == "gdm") lw = new gdm_lock (session_id, true); // always allow unlocking
-		else
-#endif
-		if (backend == "swaylock") lw = new swaylock_backend (session_id, allow_unlock);
-		else if (backend == "waylock") lw = new waylock_backend (session_id, allow_unlock);
-		else lw = new gtklock_backend (session_id, allow_unlock);
-		if (lw.init_failed)
-			return; // error message already displayed
+		listener = new lock_wrapper_listener (session_id, allow_unlock);
+		if (listener.init_failed) return; // error message already shown
+		listener.backend = start_backend (backend);
+		if (listener.backend == null) return;
 		
-		if (idle_timeout > 0)
+		if (!IdleNotify.init())
 		{
-			if (!IdleNotify.init())
-			{
-				log ("wayland-screenlock-proxy", LogLevelFlags.LEVEL_CRITICAL, "Compositor does not support the ext-idle-notify-v1 protocol, cannot automatically lock the screen on inactivity");
-			}
-			else
-			{
-				IdleNotify.set_callback (lw.do_lock);
-				IdleNotify.set_timeout (idle_timeout);
-			}
+			log ("wayland-screenlock-proxy", LogLevelFlags.LEVEL_CRITICAL, "Compositor does not support the ext-idle-notify-v1 protocol, cannot automatically lock the screen on inactivity");
+		}
+		else
+		{
+			IdleNotify.set_callback (listener.do_lock_base);
+			IdleNotify.set_timeout (idle_timeout);
 		}
 		
 		var sigterm = new GLib.Unix.SignalSource (Posix.Signal.TERM);
@@ -548,9 +687,39 @@ public class ScreenlockProxy : Application {
 	public override void shutdown ()
 	{
 		base.shutdown ();
-		if (lw != null) lw.do_unlock ();
+		if (listener != null) listener.do_unlock_base ();
 		IdleNotify.fini ();
-	}	
+	}
+	
+	private static bool check_backend (string backend)
+	{
+		if (backend != "swaylock" && backend != "gtklock" && backend != "waylock")
+		{
+	#if ENABLE_GDM
+			if (backend == "gdm") return true;
+	#endif
+			return false;
+		}
+		
+		return check_known_backend (backend);
+	}
+	
+	private static bool check_known_backend (string backend)
+	{
+		string args[] = {"which", "-s", backend, null};
+		int status;
+		bool res = false;
+		try {
+			if (Process.spawn_sync (null, args, null, SpawnFlags.SEARCH_PATH | SpawnFlags.STDOUT_TO_DEV_NULL | SpawnFlags.STDERR_TO_DEV_NULL,
+					null, null, null, out status))
+				res = Process.check_wait_status (status);
+		}
+		catch (Error e)
+		{
+			log ("wayland-screenlock-proxy", LogLevelFlags.LEVEL_CRITICAL, "Cannot run 'which': %s\n", e.message);
+		}
+		return res;
+	}
 	
 	public static int main(string[] args)
 	{
