@@ -20,15 +20,17 @@ Architecture: any
 Multi-Arch: foreign
 Depends: ${misc:Depends}, ${shlibs:Depends}, gtklock | swaylock
 Description: Proxy service to better integrate Wayland screenlockers with systemd-logind
- This package provides a systemd service that monitors idlenedd and listens to requests
- to lock the screen and runs an available screenlocker.
+ This package provides a systemd service that monitors idleness
+ and listens to requests to lock the screen and runs an available
+ screenlocker.
 
 Package: wayfire-plugin-screenlock-integration
 Architecture: any
 Multi-Arch: foreign
 Depends: wayland-screenlock-proxy, wayfire (>= 0.8.0), ${misc:Depends}, ${shlibs:Depends}
 Recommends: wcm
-Description: Plugin to better integrate screenlockers with Wayfire. This provides a
- configuration panel in WCM to choose the lockscreen to use, set the idleness timeout
- and set a keybinding to lock the screen.
+Description: Plugin to better integrate screenlockers with Wayfire
+ This provides a configuration panel in WCM to choose the
+ lockscreen to use, set the idleness timeout and set a
+ keybinding to lock the screen.
 
