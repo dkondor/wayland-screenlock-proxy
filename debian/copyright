@@ -3,13 +3,21 @@ Upstream-Name: wayland-screenlock-proxy
 Source: https://github.com/dkondor/wayland-screenlock-proxy
 
 Files: *
-Copyright: 2024 Daniel Kondor <kondor.dani@gmail.com>
+Copyright: 2025 Daniel Kondor <kondor.dani@gmail.com>
 License: GPL-3+
 
 Files: meson.build
+ meson_options.txt
  debian/*
+ wayfire_plugin/meson.build
+ wayfire_plugin/screenlock_integration.ini
+ wayfire_plugin/screenlock_integration.xml
 Copyright: 2025 Daniel Kondor <kondor.dani@gmail.com>
 License: public-domain
+
+Files: wayfire_plugin/screenlock_integration.cpp
+Copyright: 2025 Daniel Kondor <kondor.dani@gmail.com>
+License: MIT
 
 Files: gwater-wayland/*
 Copyright: 2014-2024 Morgane "Sardem FF7" Glidic <sardemff7+libgwater@sardemff7.net>
