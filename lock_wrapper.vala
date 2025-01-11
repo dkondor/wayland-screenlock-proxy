@@ -572,38 +572,50 @@ public class ScreenlockProxy : Application
 	
 	public override void startup ()
 	{
-		print ("Startup\n");
 		base.startup ();
+		
+		string config_dir = Environment.get_variable ("XDG_CONFIG_HOME");
+		if (config_dir == null) config_dir = Environment.get_variable ("HOME") + "/.config";
+		config_dir += "/wayland-screenlock-proxy";
 		
 		// check if the compositor integration feature is installed and use
 		// the compositor-specific configuration if yes
-		try
+		bool have_wayfire = false;
+		for (int i = 0; i < 2; i++)
 		{
-			string fn = Config.DATADIR + "/screenlock_integration.ini";
-			KeyFile int_config = new KeyFile ();
-			int_config.load_from_file (fn, KeyFileFlags.NONE);
-			bool have_wayfire = int_config.get_boolean ("compositor_integration", "wayfire");
-			if (have_wayfire)
+			string dir = (i == 0) ? config_dir : Config.DATADIR; // this is ugly, but cannot do foreach (... [x, y])
+			try
 			{
-				string wayfire_config = Environment.get_variable ("WAYFIRE_CONFIG_FILE");
-				if (wayfire_config != null)
+				string fn = dir + "/screenlock_integration.ini";
+				KeyFile int_config = new KeyFile ();
+				int_config.load_from_file (fn, KeyFileFlags.NONE);
+				bool have_key = int_config.has_key ("compositor_integration", "wayfire");
+				if (have_key)
 				{
-					config_file_name = wayfire_config;
-					config_file_group = "screenlock_integration";
+					have_wayfire = int_config.get_boolean ("compositor_integration", "wayfire");
+					break;
 				}
 			}
+			catch (Error e)
+			{
+				// having an error here is normal if the above configuration file does not exist
+				log ("wayland-screenlock-proxy", LogLevelFlags.LEVEL_DEBUG, "Cannot load compositor integration config (%s)\n", e.message);
+			}
 		}
-		catch (Error e)
+			
+		if (have_wayfire)
 		{
-			// having an error here is normal if the above configuration file does not exist
-			log ("wayland-screenlock-proxy", LogLevelFlags.LEVEL_DEBUG, "Cannot load compositor integration config (%s)\n", e.message);
+			string wayfire_config = Environment.get_variable ("WAYFIRE_CONFIG_FILE");
+			if (wayfire_config != null) // can be null if not actually running under Wayfire
+			{
+				config_file_name = wayfire_config;
+				config_file_group = "screenlock_integration";
+			}
 		}
 		
 		if (config_file_name == null)
 		{
-			string config_location = Environment.get_variable ("XDG_CONFIG_HOME");
-			if (config_location == null) config_location = Environment.get_variable ("HOME") + "/.config";
-			config_file_name = config_location + "/wayland-screenlock-proxy/config.ini";
+			config_file_name = config_dir + "/config.ini";
 			config_file_group = "General";
 		}
 		
@@ -629,7 +641,6 @@ public class ScreenlockProxy : Application
 	
 	public override void activate ()
 	{
-		print ("Activate\n");
 		if (activated) return;
 		activated = true;
 		
