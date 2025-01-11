@@ -1,0 +1,3 @@
+usr/lib/*/wayfire/libscreenlock_integration.so
+usr/share/wayfire/metadata/screenlock_integration.xml
+usr/share/wayland-screenlock-proxy/screenlock_integration.ini

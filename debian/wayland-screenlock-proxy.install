@@ -1,0 +1,3 @@
+usr/lib/systemd/user/wayland-screenlock-proxy.service
+usr/libexec/wayland-screenlock-proxy
+usr/share/wayland-screenlock-proxy/config.ini
