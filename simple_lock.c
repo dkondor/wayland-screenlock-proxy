@@ -29,6 +29,8 @@ static GWaterWaylandSource *source = NULL;
 static struct ext_session_lock_manager_v1 *manager = NULL;
 static struct ext_session_lock_v1 *current_lock = NULL;
 static bool is_locked = false;
+static SimpleLockCallback s_cb = NULL;
+static void *s_cb_data = NULL;
 
 static void _add (void*, struct wl_registry *registry,
 		uint32_t name, const char *interface, uint32_t) {
@@ -44,6 +46,7 @@ static struct wl_registry_listener listener = { &_add, &_remove };
 static void _locked (void*, struct ext_session_lock_v1*)
 {
 	is_locked = true;
+	if (s_cb) s_cb (true, s_cb_data);
 }
 
 static void _finished (void*, struct ext_session_lock_v1*)
@@ -100,6 +103,13 @@ void simple_lock_unlock ()
 	if (is_locked) ext_session_lock_v1_unlock_and_destroy (current_lock);
 	else ext_session_lock_v1_destroy (current_lock);
 	current_lock = NULL;
+	if (s_cb) s_cb (false, s_cb_data);
+}
+
+void simple_lock_set_callback (SimpleLockCallback cb, void *user_data)
+{
+	s_cb = cb;
+	s_cb_data = user_data;
 }
 
 void simple_lock_fini ()

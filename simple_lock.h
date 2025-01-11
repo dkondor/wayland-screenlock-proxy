@@ -37,6 +37,10 @@ void simple_lock_lock (void);
 /* Unlock the screen. */
 void simple_lock_unlock (void);
 
+/* Set a callback to signal when the screen is locked / unlocked. */
+typedef void (*SimpleLockCallback) (bool, void*);
+void simple_lock_set_callback (SimpleLockCallback cb, void *user_data);
+
 /* free all resources */
 void simple_lock_fini (void);
 

@@ -7,6 +7,10 @@ namespace SimpleLock {
 	void lock();
 	[CCode (cname = "simple_lock_unlock")]
 	void unlock();
+	[CCode (cname = "SimpleLockCallback")]
+	delegate void SimpleLockCallback(bool locked);
+	[CCode (cname = "simple_lock_set_callback")]
+	void set_callback(SimpleLockCallback? cb);
 	[CCode (cname = "simple_lock_fini")]
 	void fini();
 }
