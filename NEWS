@@ -1,3 +1,7 @@
+0.4.0
+=========
+ * Support locking when the session becomes inactive (e.g. on VT switch)
+
 0.3.0
 =========
  * Support locking when the session is idle
