@@ -43,6 +43,11 @@
 				<default>300</default>
 				<min>0</min>
 			</option>
+			<option name="lock_on_inactive" type="bool">
+				<_short>Lock the screen when the session is inactive</_short>
+				<_long>This typically happens on a VT switch.</_long>
+				<default>true</default>
+			</option>
 		</group>
 	</plugin>
 </wayfire>

@@ -26,6 +26,9 @@ namespace interfaces {
 
 		[DBus (name = "LockedHint")]
 		public abstract bool locked_hint {  get; }
+		
+		[DBus (name = "Active")]
+		public abstract bool active { get; }
 	}
 
 	[DBus (name = "org.freedesktop.DBus.Properties", timeout = 120000)]

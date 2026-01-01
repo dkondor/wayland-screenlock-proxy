@@ -54,6 +54,10 @@ abstract class lock_wrapper_backend : Object
 		}
 	}
 	
+	public virtual void props_changed (string interface_name, GLib.HashTable<string, GLib.Variant> changed_properties, string[] invalidated_properties)
+	{
+		// no-op by default
+	}
 }
 
 
@@ -62,9 +66,11 @@ class lock_wrapper_listener : Object
 	public bool init_failed { get; protected set; default = false; }
 	public bool allow_unlock = false;
 	public bool is_locked { get; protected set; default = false; }
+	public bool lock_on_inactive = false;
 	
 	private interfaces.Manager manager = null;
 	private interfaces.Session session = null;
+	private interfaces.Properties props = null;
 	private UnixInputStream inhibitor  = null;
 	private bool should_stop_inhibitor = false;
 	private string session_id = null;
@@ -95,6 +101,7 @@ class lock_wrapper_listener : Object
 			session_path = manager.get_session (session_id);
 			log ("wayland-screenlock-proxy", LogLevelFlags.LEVEL_DEBUG, "session_path: %s\n", (string)session_path);
 			session = Bus.get_proxy_sync (BusType.SYSTEM, "org.freedesktop.login1", session_path);
+			props = Bus.get_proxy_sync (BusType.SYSTEM, "org.freedesktop.login1", session_path);
 		}
 		catch (Error e)
 		{
@@ -111,6 +118,22 @@ class lock_wrapper_listener : Object
 		}
 		session.lock.connect (do_lock_base);
 		session.unlock.connect (do_unlock_base);
+		props.properties_changed.connect (props_changed);
+	}
+	
+	private void props_changed (string interface_name, GLib.HashTable<string, GLib.Variant> changed_properties, string[] invalidated_properties)
+	{
+		if (!lock_on_inactive || is_locked) return;
+		if (interface_name == "org.freedesktop.login1.Session")
+		{
+			unowned GLib.Variant? val = changed_properties.get ("Active");
+			if (val != null && val.is_of_type (VariantType.BOOLEAN) && !val.get_boolean ())
+			{
+				do_lock_base ();
+			}
+		}
+		
+		if (backend != null) backend.props_changed (interface_name, changed_properties, invalidated_properties);
 	}
 	
 	private void sleep_status_changed (bool start)
@@ -270,20 +293,10 @@ class waylock_backend : pipefd_backend_base
 class gtklock_backend : lock_wrapper_backend
 {
 	private Pid child_pid = -1;
-	private interfaces.Properties props = null;
 	
 	public gtklock_backend (lock_wrapper_listener _parent)
 	{
 		base (_parent);
-		
-		try { props = Bus.get_proxy_sync (BusType.SYSTEM, "org.freedesktop.login1", parent.session_path); }
-		catch (Error e)
-		{
-			log ("wayland-screenlock-proxy", LogLevelFlags.LEVEL_CRITICAL, "Failed to create DBus proxies: %s\n", e.message);
-			init_failed = true;
-			return;
-		}
-		props.properties_changed.connect (props_changed);
 	}
 	
 	public override void do_lock ()
@@ -321,12 +334,12 @@ class gtklock_backend : lock_wrapper_backend
 		parent.set_locked_state (false);
 	}
 	
-	private void props_changed (string interface_name, GLib.HashTable<string, GLib.Variant> changed_properties, string[] invalidated_properties)
+	public override void props_changed (string interface_name, GLib.HashTable<string, GLib.Variant> changed_properties, string[] invalidated_properties)
 	{
 		if (interface_name == "org.freedesktop.login1.Session")
 		{
 			unowned GLib.Variant? val = changed_properties.get ("LockedHint");
-			if (val != null && val.get_boolean())
+			if (val != null && val.get_boolean ())
 			{
 				parent.set_locked_state (true);
 			}
@@ -403,18 +416,20 @@ public class ScreenlockProxy : Application
 		string backend;
 		bool allow_unlock;
 		int idle_timeout;
+		bool lock_on_inactive;
 	}
 	
 	// options read from the config file
-	Options config_file = { null, false, 0 };
+	Options config_file = { null, false, 0, true };
 	// options from the command line
-	Options config_cmdline = { null, false, -1 };
+	Options config_cmdline = { null, false, -1, true };
 	
 	string pending_backend = null;
 	ulong pending_backend_signal = 0;
 	
 	string backend { get { return config_cmdline.backend ?? config_file.backend; } }
 	bool allow_unlock { get { return config_cmdline.allow_unlock || config_file.allow_unlock; } }
+	bool lock_on_inactive { get { return config_cmdline.lock_on_inactive && config_file.lock_on_inactive; } }
 	uint idle_timeout { get {
 		int ret = (config_cmdline.idle_timeout >= 0) ? config_cmdline.idle_timeout : config_file.idle_timeout;
 		return (ret >= 0) ? ret : 0;
@@ -431,7 +446,8 @@ public class ScreenlockProxy : Application
 			{"session-id", 'i', OptionFlags.NONE, OptionArg.STRING, ref session_id, "ID of the session to monitor for lock and unlock signals.", "ID"},
 			{"backend", 'b', OptionFlags.NONE, OptionArg.STRING, ref config_cmdline.backend, "Screenlocker program to use. Supported backends are: swaylock, gtklock and waylock.", "BACKEND"},
 			{"allow-unlock", 'u', OptionFlags.NONE, OptionArg.NONE, ref config_cmdline.allow_unlock, "Allow unlocking the screen in response to an \"org.freedesktop.login1.Session.Unlock\" signal.", null},
-			{"idle-timeout", 'I', OptionFlags.NONE, OptionArg.INT, ref config_cmdline.idle_timeout, "Lock the session automatically after being inactive for this time (in seconds; set to 0 to disable).", "TIME"}
+			{"idle-timeout", 'I', OptionFlags.NONE, OptionArg.INT, ref config_cmdline.idle_timeout, "Lock the session automatically after being inactive for this time (in seconds; set to 0 to disable).", "TIME"},
+			{"no-lock-on-inactive", 'L', OptionFlags.REVERSE, OptionArg.NONE, ref config_cmdline.lock_on_inactive, "Do not lock the session automatically when it becomes inactive e.g. due to a VT switch.", null}
 		};
 		
 		add_main_option_entries (options);
@@ -450,6 +466,7 @@ public class ScreenlockProxy : Application
 				if (config.has_key (config_file_group, "allow_unlock")) conf.allow_unlock = config.get_boolean (config_file_group, "allow_unlock");
 				if (config.has_key (config_file_group, "backend")) conf.backend = config.get_string (config_file_group, "backend");
 				if (config.has_key (config_file_group, "idle_lock_timeout")) conf.idle_timeout = config.get_integer (config_file_group, "idle_lock_timeout");
+				if (config.has_key (config_file_group, "lock_on_inactive")) conf.lock_on_inactive = config.get_boolean (config_file_group, "lock_on_inactive");
 			}
 		}
 		catch (Error e)
@@ -482,6 +499,9 @@ public class ScreenlockProxy : Application
 			
 			config_file.idle_timeout = new_conf.idle_timeout;
 			IdleNotify.set_timeout (idle_timeout);
+			
+			config_file.lock_on_inactive = new_conf.lock_on_inactive;
+			listener.lock_on_inactive = lock_on_inactive;
 			
 			if (config_cmdline.backend == null && new_conf.backend != config_file.backend)
 			{
@@ -675,6 +695,7 @@ public class ScreenlockProxy : Application
 		if (listener.init_failed) return; // error message already shown
 		listener.backend = start_backend (backend);
 		if (listener.backend == null) return;
+		listener.lock_on_inactive = lock_on_inactive;
 		
 		if (!IdleNotify.init())
 		{
