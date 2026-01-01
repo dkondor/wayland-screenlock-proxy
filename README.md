@@ -9,6 +9,7 @@ The following are supported:
  - Unlocking the screen in response to the `Unlock` signal (e.g. when running `loginctl unlock-session` -- only if the screenlocker allows a clean exit; not available with `waylock`).
  - Locking the screen when the system is suspended (in response to the `PrepareForSleep` signal), and delaying suspend until the screen is succesfully locked.
  - Locking the screen after being idle for a specified time (using the `ext-idle-notify-v1` protocol)
+ - Locking the screen when the session becomes inactive (`org.freedesktop.login1.Session.Active` property, e.g. on VT switch)
  - Setting the `LockedHint` property on the corresponding session according to the lock state.
  - Restarting a screenlocker that crashed or exited without unlocking the screen.
  - Running as a systemd service.
@@ -93,6 +94,7 @@ the following options are supported (all should be in the `General` section of t
  - `allow_unlock`: whether to allow unlocking the screen in response to the "Unlock" signal from systemd (e.g. by running `loginctl unlock-session`). If this is false, unlocking is only possible from the screen locker (default: false)
  - `backend`: name of the screenlocker program to use (see below; default: try all in the order shown below)
  - `idle_lock_timeout`: automatically lock the screen after being idle for this time (in seconds; 0 to disable automatic locking)
+ - `lock_on_inactive`: whether to automatically lock the session when it is inactive, typically on VT switch (default: true)
 
 Configuration will be dynamically updated whenever the config file is edited.
 
@@ -126,6 +128,7 @@ If run from the command line, the following parameters can be used:
  - `-u`: allow unlocking
  - `-b [backend]`: select the screenlocker to use
  - `-I [timeout]`: set the idleness timeout
+ - `-L`: do not lock when the session becomes inactive
 
 E.g. to use swaylock, run as:
 ```
