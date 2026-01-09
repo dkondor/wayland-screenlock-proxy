@@ -13,8 +13,9 @@ namespace interfaces {
 		public signal void prepare_for_sleep(bool start);
 	}
 
+	// note: need to derive from DBusProxy to get the g-properties-changed signal
 	[DBus (name = "org.freedesktop.login1.Session", timeout = 120000)]
-	public interface Session : GLib.Object {
+	public interface Session : GLib.DBusProxy {
 		[DBus (name = "SetLockedHint")]
 		public abstract void set_locked_hint(bool locked) throws DBusError, IOError;
 
@@ -29,22 +30,6 @@ namespace interfaces {
 		
 		[DBus (name = "Active")]
 		public abstract bool active { get; }
-	}
-
-	[DBus (name = "org.freedesktop.DBus.Properties", timeout = 120000)]
-	public interface Properties : GLib.Object {
-
-		[DBus (name = "Get")]
-		public abstract GLib.Variant get(string interface_name, string property_name) throws DBusError, IOError;
-
-		[DBus (name = "GetAll")]
-		public abstract GLib.HashTable<string, GLib.Variant> get_all(string interface_name) throws DBusError, IOError;
-
-		[DBus (name = "Set")]
-		public abstract void set(string interface_name, string property_name, GLib.Variant value) throws DBusError, IOError;
-
-		[DBus (name = "PropertiesChanged")]
-		public signal void properties_changed(string interface_name, GLib.HashTable<string, GLib.Variant> changed_properties, string[] invalidated_properties);
 	}
 
 	[DBus (name = "org.gnome.DisplayManager.LocalDisplayFactory", timeout = 120000)]

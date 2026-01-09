@@ -54,7 +54,7 @@ abstract class lock_wrapper_backend : Object
 		}
 	}
 	
-	public virtual void props_changed (string interface_name, GLib.HashTable<string, GLib.Variant> changed_properties, string[] invalidated_properties)
+	public virtual void props_changed (GLib.Variant changed_properties, string[] invalidated_properties)
 	{
 		// no-op by default
 	}
@@ -70,7 +70,6 @@ class lock_wrapper_listener : Object
 	
 	private interfaces.Manager manager = null;
 	private interfaces.Session session = null;
-	private interfaces.Properties props = null;
 	private UnixInputStream inhibitor  = null;
 	private bool should_stop_inhibitor = false;
 	private string session_id = null;
@@ -101,7 +100,6 @@ class lock_wrapper_listener : Object
 			session_path = manager.get_session (session_id);
 			log ("wayland-screenlock-proxy", LogLevelFlags.LEVEL_DEBUG, "session_path: %s\n", (string)session_path);
 			session = Bus.get_proxy_sync (BusType.SYSTEM, "org.freedesktop.login1", session_path);
-			props = Bus.get_proxy_sync (BusType.SYSTEM, "org.freedesktop.login1", session_path);
 		}
 		catch (Error e)
 		{
@@ -118,22 +116,20 @@ class lock_wrapper_listener : Object
 		}
 		session.lock.connect (do_lock_base);
 		session.unlock.connect (do_unlock_base);
-		props.properties_changed.connect (props_changed);
+		session.g_properties_changed.connect (props_changed);
 	}
 	
-	private void props_changed (string interface_name, GLib.HashTable<string, GLib.Variant> changed_properties, string[] invalidated_properties)
+	private void props_changed (GLib.Variant changed_properties, string[] invalidated_properties)
 	{
-		if (!lock_on_inactive || is_locked) return;
-		if (interface_name == "org.freedesktop.login1.Session")
-		{
-			unowned GLib.Variant? val = changed_properties.get ("Active");
-			if (val != null && val.is_of_type (VariantType.BOOLEAN) && !val.get_boolean ())
-			{
-				do_lock_base ();
-			}
-		}
+		if (backend != null) backend.props_changed (changed_properties, invalidated_properties);
 		
-		if (backend != null) backend.props_changed (interface_name, changed_properties, invalidated_properties);
+		if (!lock_on_inactive || is_locked) return;
+		
+		GLib.Variant? val = changed_properties.lookup_value ("Active", GLib.VariantType.BOOLEAN);
+		if (val != null && !val.get_boolean ())
+		{
+			do_lock_base ();
+		}
 	}
 	
 	private void sleep_status_changed (bool start)
@@ -334,15 +330,12 @@ class gtklock_backend : lock_wrapper_backend
 		parent.set_locked_state (false);
 	}
 	
-	public override void props_changed (string interface_name, GLib.HashTable<string, GLib.Variant> changed_properties, string[] invalidated_properties)
+	public override void props_changed (GLib.Variant changed_properties, string[] invalidated_properties)
 	{
-		if (interface_name == "org.freedesktop.login1.Session")
+		GLib.Variant? val = changed_properties.lookup_value ("LockedHint", GLib.VariantType.BOOLEAN);
+		if (val != null && val.get_boolean ())
 		{
-			unowned GLib.Variant? val = changed_properties.get ("LockedHint");
-			if (val != null && val.get_boolean ())
-			{
-				parent.set_locked_state (true);
-			}
+			parent.set_locked_state (true);
 		}
 	}
 }
